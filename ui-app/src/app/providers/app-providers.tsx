@@ -15,6 +15,7 @@ import type {
 } from "../../application/ports/workspace-port";
 import {
   getStorageMode,
+  getPublishedSupabaseConfig,
   getSupabaseConfig,
   getSupabaseUser,
   onSupabaseAuthChange,
@@ -90,6 +91,11 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [activeOrganizationId, setActiveOrganizationId] = useState<string>();
   const [connectionRevision, setConnectionRevision] = useState(0);
   const [cloudUserEmail, setCloudUserEmail] = useState<string>();
+  const [isApplyingPublishedConfig, setIsApplyingPublishedConfig] = useState(() => {
+    const published = getPublishedSupabaseConfig();
+    const current = getSupabaseConfig();
+    return Boolean(published && (!current || current.url !== published.url || current.publishableKey !== published.publishableKey));
+  });
   const client = useQueryClient();
 
   const storageMode = getStorageMode();
@@ -98,6 +104,7 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
   const query = useQuery({
     queryKey: ["workspace", activeOrganizationId ?? "default", connectionRevision],
     queryFn: () => workspacePort.getSnapshot(activeOrganizationId),
+    enabled: !isApplyingPublishedConfig,
   });
 
   const refresh = async () => {
@@ -114,13 +121,25 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
+    const published = getPublishedSupabaseConfig();
+    const current = getSupabaseConfig();
+    if (published && (!current || current.url !== published.url || current.publishableKey !== published.publishableKey)) {
+      saveSupabaseConfig(published);
+      setActiveOrganizationId(undefined);
+      setConnectionRevision((currentRevision) => currentRevision + 1);
+    }
+    setIsApplyingPublishedConfig(false);
+  }, []);
+
+  useEffect(() => {
+    if (isApplyingPublishedConfig) return;
     void refreshCloudUser();
     if (storageMode !== "supabase") return;
     return onSupabaseAuthChange(() => {
       void refreshCloudUser();
       void refresh();
     });
-  }, [storageMode, connectionRevision]);
+  }, [storageMode, connectionRevision, isApplyingPublishedConfig]);
 
   useEffect(() => {
     if (storageMode !== "supabase" || !query.data) return;
@@ -226,10 +245,10 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
   const value = useMemo<WorkspaceContextValue>(
     () => ({
       snapshot: query.data,
-      isLoading: query.isLoading,
+      isLoading: isApplyingPublishedConfig || query.isLoading,
       isError: query.isError,
       error: query.error instanceof Error ? query.error : undefined,
-      needsOnboarding: !query.isLoading && query.data === null,
+      needsOnboarding: !isApplyingPublishedConfig && !query.isLoading && query.data === null,
       activeOrganizationId,
       storageMode,
       supabaseConfig,
@@ -307,6 +326,7 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
     }),
     [
       query.data, query.isLoading, query.isError, query.error, query.refetch,
+      isApplyingPublishedConfig,
       activeOrganizationId, storageMode, supabaseConfig?.url, supabaseConfig?.publishableKey,
       cloudUserEmail, connectionRevision, client,
       workspaceMutation, organizationMutation, joinOrganizationMutation, projectMutation,

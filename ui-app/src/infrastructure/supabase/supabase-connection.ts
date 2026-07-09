@@ -89,6 +89,17 @@ export function getSupabaseConfig(): SupabaseConnectionConfig | null {
   }
 }
 
+export function getPublishedSupabaseConfig(): SupabaseConnectionConfig | null {
+  const env = import.meta.env;
+  const url = env.VITE_YETLY_SUPABASE_URL || env.VITE_SUPABASE_URL || "";
+  const publishableKey = env.VITE_YETLY_SUPABASE_PUBLISHABLE_KEY
+    || env.VITE_SUPABASE_PUBLISHABLE_KEY
+    || env.VITE_SUPABASE_ANON_KEY
+    || "";
+  if (!url || !publishableKey) return null;
+  return validateSupabaseConfig({ url, publishableKey });
+}
+
 export function saveSupabaseConfig(config: SupabaseConnectionConfig) {
   const normalized = validateSupabaseConfig(config);
   window.localStorage.setItem(CONNECTION_KEY, JSON.stringify({ mode: "supabase", config: normalized }));

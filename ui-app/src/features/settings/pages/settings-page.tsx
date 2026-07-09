@@ -18,6 +18,7 @@ import {
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
+import { getPublishedSupabaseConfig } from "../../../infrastructure/supabase/supabase-connection";
 import { Button } from "../../../shared/ui/button";
 import { PageHeader } from "../../../shared/ui/page-header";
 
@@ -87,18 +88,18 @@ export function SettingsPage() {
     const code = snapshot?.activeOrganization.inviteCode;
     if (!code || !supabaseConfig) return;
     const baseUrl = `${window.location.origin}${window.location.pathname}`;
-    const params = new URLSearchParams({
-      invite: code,
-      supabaseUrl: supabaseConfig.url,
-      publishableKey: supabaseConfig.publishableKey,
-    });
+    const params = new URLSearchParams({ invite: code });
+    if (!getPublishedSupabaseConfig()) {
+      params.set("supabaseUrl", supabaseConfig.url);
+      params.set("publishableKey", supabaseConfig.publishableKey);
+    }
     const inviteUrl = `${baseUrl}#/connect-supabase?${params.toString()}`;
     await navigator.clipboard.writeText([
       "Te invito a Yetly.",
       "",
       `Entra aquí: ${inviteUrl}`,
       "",
-      "Crea tu cuenta o inicia sesión. El código de invitación ya va incluido.",
+      "Crea tu cuenta o inicia sesión. La invitación ya va incluida.",
     ].join("\n"));
     setConnectionMessage("Invitación copiada. Envíala a la persona que quieres sumar.");
   }
