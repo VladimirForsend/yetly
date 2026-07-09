@@ -16,8 +16,8 @@ import {
   UserPlus,
   Users,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import {
   dashboardLinks,
@@ -46,6 +46,7 @@ function ExternalGuideLink({ href, children }: { href: string; children: React.R
 
 export function OnboardingPage() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const {
     storageMode,
     supabaseConfig,
@@ -73,12 +74,40 @@ export function OnboardingPage() {
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const inviteHandledRef = useRef(false);
 
   const config: SupabaseConnectionConfig = useMemo(() => ({
     url: url.trim(),
     publishableKey: publishableKey.trim(),
   }), [url, publishableKey]);
   const links = useMemo(() => dashboardLinks(url || supabaseConfig?.url || ""), [url, supabaseConfig?.url]);
+
+  useEffect(() => {
+    if (inviteHandledRef.current) return;
+    const invite = searchParams.get("invite")?.trim().toUpperCase() ?? "";
+    const invitedUrl = searchParams.get("supabaseUrl")?.trim() ?? "";
+    const invitedKey = searchParams.get("publishableKey")?.trim() ?? "";
+    if (!invite || !invitedUrl || !invitedKey) return;
+
+    inviteHandledRef.current = true;
+    setUrl(invitedUrl);
+    setPublishableKey(invitedKey);
+    setInviteCode(invite);
+    setWorkspaceMode("join");
+    setProbeMessage("Invitación detectada. Estamos conectando Yetly al Supabase del equipo.");
+
+    void (async () => {
+      try {
+        const result = await connectSupabase({ url: invitedUrl, publishableKey: invitedKey });
+        setSchemaReady(result.schemaReady);
+        setProbeMessage(result.schemaReady ? "Conexión lista. Crea tu cuenta o inicia sesión para unirte." : result.message);
+        setStep(result.schemaReady ? 3 : 2);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "No pudimos abrir la invitación.");
+        setStep(1);
+      }
+    })();
+  }, [connectSupabase, searchParams]);
 
   async function testConnection() {
     setError("");

@@ -85,9 +85,22 @@ export function SettingsPage() {
 
   async function copyInviteCode() {
     const code = snapshot?.activeOrganization.inviteCode;
-    if (!code) return;
-    await navigator.clipboard.writeText(code);
-    setConnectionMessage("Código de invitación copiado.");
+    if (!code || !supabaseConfig) return;
+    const baseUrl = `${window.location.origin}${window.location.pathname}`;
+    const params = new URLSearchParams({
+      invite: code,
+      supabaseUrl: supabaseConfig.url,
+      publishableKey: supabaseConfig.publishableKey,
+    });
+    const inviteUrl = `${baseUrl}#/connect-supabase?${params.toString()}`;
+    await navigator.clipboard.writeText([
+      "Te invito a Yetly.",
+      "",
+      `Entra aquí: ${inviteUrl}`,
+      "",
+      "Crea tu cuenta o inicia sesión. El código de invitación ya va incluido.",
+    ].join("\n"));
+    setConnectionMessage("Invitación copiada. Envíala a la persona que quieres sumar.");
   }
 
   async function renewInviteCode() {
@@ -170,7 +183,7 @@ export function SettingsPage() {
                 <h2 id="invite-heading" className="font-black text-ink-950">Invitar al espacio compartido</h2>
               </div>
               <p className="mt-2 max-w-2xl text-sm leading-6 text-ink-600">
-                Tu compañero conecta el mismo proyecto Supabase, crea su cuenta y elige “Unirme con código”.
+                Tu compañero abre el enlace de invitación, crea su cuenta o inicia sesión y entra directo con este código.
               </p>
               <div className="mt-4 inline-flex items-center gap-3 rounded-xl bg-slate-950 px-4 py-3 text-white">
                 <code className="font-mono text-base font-black tracking-[.18em]">{snapshot.activeOrganization.inviteCode}</code>
@@ -180,7 +193,7 @@ export function SettingsPage() {
               </p>
             </div>
             <div className="flex flex-wrap gap-3">
-              <Button onClick={() => void copyInviteCode()}><Copy className="h-4 w-4" aria-hidden="true" /> Copiar código</Button>
+              <Button onClick={() => void copyInviteCode()}><Copy className="h-4 w-4" aria-hidden="true" /> Copiar invitación</Button>
               <Button variant="secondary" onClick={() => void renewInviteCode()}><RefreshCw className="h-4 w-4" aria-hidden="true" /> Renovar</Button>
             </div>
           </div>
