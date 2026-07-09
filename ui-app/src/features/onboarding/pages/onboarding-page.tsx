@@ -21,7 +21,10 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import {
   dashboardLinks,
+  getPublishedSupabaseConfig,
   probeSupabase,
+  saveSupabaseConfig,
+  validateSupabaseConfig,
   type SupabaseConnectionConfig,
 } from "../../../infrastructure/supabase/supabase-connection";
 import { YETLY_SUPABASE_SCHEMA_SQL } from "../../../infrastructure/supabase/yetly-schema-sql";
@@ -59,7 +62,7 @@ export function OnboardingPage() {
     isMutating,
   } = useWorkspace();
 
-  const [step, setStep] = useState(() => (supabaseConfig ? 2 : 0));
+  const [step, setStep] = useState(() => (supabaseConfig ? 3 : 0));
   const [url, setUrl] = useState(supabaseConfig?.url ?? "");
   const [publishableKey, setPublishableKey] = useState(supabaseConfig?.publishableKey ?? "");
   const [probeMessage, setProbeMessage] = useState("");
@@ -87,27 +90,49 @@ export function OnboardingPage() {
     const invite = searchParams.get("invite")?.trim().toUpperCase() ?? "";
     const invitedUrl = searchParams.get("supabaseUrl")?.trim() ?? "";
     const invitedKey = searchParams.get("publishableKey")?.trim() ?? "";
-    if (!invite || !invitedUrl || !invitedKey) return;
+    if (!invite) return;
 
     inviteHandledRef.current = true;
     setUrl(invitedUrl);
     setPublishableKey(invitedKey);
     setInviteCode(invite);
     setWorkspaceMode("join");
-    setProbeMessage("Invitación detectada. Estamos conectando Yetly al Supabase del equipo.");
 
-    void (async () => {
-      try {
-        const result = await connectSupabase({ url: invitedUrl, publishableKey: invitedKey });
-        setSchemaReady(result.schemaReady);
-        setProbeMessage(result.schemaReady ? "Conexión lista. Crea tu cuenta o inicia sesión para unirte." : result.message);
-        setStep(result.schemaReady ? 3 : 2);
-      } catch (cause) {
-        setError(cause instanceof Error ? cause.message : "No pudimos abrir la invitación.");
-        setStep(1);
-      }
-    })();
-  }, [connectSupabase, searchParams]);
+    let embeddedConfig: SupabaseConnectionConfig | null = null;
+    try {
+      embeddedConfig = invitedUrl && invitedKey
+        ? validateSupabaseConfig({ url: invitedUrl, publishableKey: invitedKey })
+        : getPublishedSupabaseConfig() ?? supabaseConfig;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "La invitación no es válida.");
+      setStep(1);
+      return;
+    }
+
+    if (!embeddedConfig) {
+      setError("Esta invitación no trae la conexión del espacio. Pide una invitación nueva.");
+      setStep(1);
+      return;
+    }
+
+    setUrl(embeddedConfig.url);
+    setPublishableKey(embeddedConfig.publishableKey);
+
+    const needsConfigRefresh = !supabaseConfig
+      || supabaseConfig.url !== embeddedConfig.url
+      || supabaseConfig.publishableKey !== embeddedConfig.publishableKey;
+
+    if (needsConfigRefresh) {
+      saveSupabaseConfig(embeddedConfig);
+      const cleanParams = new URLSearchParams({ invite });
+      window.location.replace(`${window.location.origin}${window.location.pathname}#/connect-supabase?${cleanParams.toString()}`);
+      return;
+    }
+
+    setSchemaReady(true);
+    setProbeMessage("Invitación lista. Crea tu cuenta o inicia sesión para unirte.");
+    setStep(cloudUserEmail ? 4 : 3);
+  }, [cloudUserEmail, searchParams, supabaseConfig]);
 
   async function testConnection() {
     setError("");
