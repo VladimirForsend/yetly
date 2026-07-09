@@ -562,7 +562,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   async addTeamMember(teamId: string, userId: string): Promise<void> {
     const { error } = await this.client
       .from("team_members")
-      .upsert({ team_id: teamId, user_id: userId, role: "member" }, { onConflict: "team_id,user_id" });
+      .upsert({ team_id: teamId, user_id: userId, role: "member" }, { onConflict: "team_id,user_id", ignoreDuplicates: true });
     if (error) throw asError(error, "No pudimos agregar la persona al equipo.");
   }
 

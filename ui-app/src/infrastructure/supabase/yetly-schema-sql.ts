@@ -562,7 +562,7 @@ grant select, update on public.profiles to authenticated;
 grant select, update on public.organizations to authenticated;
 grant select, update, delete on public.organization_members to authenticated;
 grant select, insert, update, delete on public.teams to authenticated;
-grant select, insert, delete on public.team_members to authenticated;
+grant select, insert, update, delete on public.team_members to authenticated;
 grant select, insert, update, delete on public.projects to authenticated;
 grant select, insert, update, delete on public.tasks to authenticated;
 grant select, insert, update, delete on public.time_entries to authenticated;
