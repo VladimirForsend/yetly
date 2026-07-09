@@ -1,0 +1,215 @@
+export type ProjectHealth = "green" | "yellow" | "red" | "unknown";
+export type ProjectStatus = "planned" | "active" | "on_hold" | "completed";
+export type TaskStatus = "backlog" | "todo" | "in_progress" | "review" | "done";
+export type Priority = "low" | "normal" | "high" | "urgent";
+
+export interface OrganizationSummary {
+  id: string;
+  name: string;
+  initials: string;
+  color: string;
+  inviteCode?: string;
+  memberRole?: "owner" | "admin" | "member" | "viewer";
+}
+
+export interface PersonSummary {
+  id: string;
+  name: string;
+  initials: string;
+  role: string;
+  avatarTone: string;
+}
+
+export interface ProjectSummary {
+  id: string;
+  code: string;
+  name: string;
+  owner: PersonSummary;
+  status: ProjectStatus;
+  health: ProjectHealth;
+  healthReason: string;
+  progress: number;
+  targetDate: string;
+  actualMinutes: number;
+  estimateMinutes: number;
+  teamName: string;
+  accent: string;
+}
+
+export interface TaskSummary {
+  id: string;
+  projectId: string;
+  projectCode: string;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  priority: Priority;
+  dueDate?: string;
+  startDate?: string;
+  estimateMinutes: number;
+  actualMinutes: number;
+  assignees: PersonSummary[];
+  labels: string[];
+  blockedReason?: string;
+  completed: boolean;
+}
+
+export interface TeamSummary {
+  id: string;
+  name: string;
+  members: PersonSummary[];
+}
+
+export interface WorkloadPerson {
+  person: PersonSummary;
+  capacityMinutes: number;
+  assignedMinutes: number;
+  taskCount: number;
+  teamName: string;
+}
+
+export interface ActivityItem {
+  id: string;
+  actor: PersonSummary;
+  action: string;
+  objectLabel: string;
+  timestampLabel: string;
+}
+
+export interface NotificationSummary {
+  id: string;
+  title: string;
+  description: string;
+  unread: boolean;
+  tone: "info" | "warning" | "danger";
+}
+
+export interface WeeklyTimePoint {
+  day: string;
+  minutes: number;
+}
+
+export interface TimeEntrySummary {
+  id: string;
+  projectId: string;
+  taskId?: string;
+  workDate: string;
+  durationMinutes: number;
+  note: string;
+  source: "timer" | "manual";
+}
+
+export interface WorkspaceSnapshot {
+  activeOrganization: OrganizationSummary;
+  organizations: OrganizationSummary[];
+  currentUser: PersonSummary;
+  projects: ProjectSummary[];
+  tasks: TaskSummary[];
+  teams: TeamSummary[];
+  workload: WorkloadPerson[];
+  activities: ActivityItem[];
+  notifications: NotificationSummary[];
+  weeklyTime: WeeklyTimePoint[];
+  timeEntries: TimeEntrySummary[];
+  activeTimer?: {
+    taskId: string;
+    taskTitle: string;
+    startedAtIso: string;
+    elapsedLabel: string;
+  };
+}
+
+export interface CreateWorkspaceInput {
+  userName: string;
+  organizationName: string;
+  role?: string;
+}
+
+export interface JoinOrganizationInput {
+  inviteCode: string;
+  userName: string;
+  role?: string;
+}
+
+export interface CreateProjectInput {
+  name: string;
+  code?: string;
+  teamName?: string;
+  targetDate?: string;
+  status?: ProjectStatus;
+}
+
+export interface UpdateProjectInput {
+  name?: string;
+  teamName?: string;
+  targetDate?: string;
+  status?: ProjectStatus;
+}
+
+export interface CreateTeamInput {
+  name: string;
+}
+
+export interface CreateTaskInput {
+  projectId: string;
+  title: string;
+  description?: string;
+  status: TaskStatus;
+  priority: Priority;
+  dueDate?: string;
+  startDate?: string;
+  estimateMinutes?: number;
+  assigneeId?: string;
+}
+
+export interface UpdateTaskInput {
+  title?: string;
+  description?: string;
+  status?: TaskStatus;
+  priority?: Priority;
+  dueDate?: string;
+  startDate?: string;
+  estimateMinutes?: number;
+  assigneeId?: string;
+}
+
+export interface CreateTimeEntryInput {
+  projectId: string;
+  taskId?: string;
+  workDate: string;
+  durationMinutes: number;
+  note?: string;
+}
+
+export interface ImportResult {
+  projects: number;
+  tasks: number;
+  timeEntries: number;
+}
+
+export interface WorkspacePort {
+  getSnapshot(organizationId?: string): Promise<WorkspaceSnapshot | null>;
+  createWorkspace(input: CreateWorkspaceInput): Promise<WorkspaceSnapshot>;
+  createOrganization(name: string): Promise<OrganizationSummary>;
+  joinOrganization(input: JoinOrganizationInput): Promise<OrganizationSummary>;
+  rotateInviteCode(): Promise<string>;
+  createProject(input: CreateProjectInput): Promise<ProjectSummary>;
+  updateProject(projectId: string, input: UpdateProjectInput): Promise<ProjectSummary>;
+  deleteProject(projectId: string): Promise<void>;
+  createTeam(input: CreateTeamInput): Promise<TeamSummary>;
+  deleteTeam(teamId: string): Promise<void>;
+  addTeamMember(teamId: string, userId: string): Promise<void>;
+  removeTeamMember(teamId: string, userId: string): Promise<void>;
+  createTask(input: CreateTaskInput): Promise<TaskSummary>;
+  updateTask(taskId: string, input: UpdateTaskInput): Promise<TaskSummary>;
+  moveTask(taskId: string, status: TaskStatus): Promise<TaskSummary>;
+  deleteTask(taskId: string): Promise<void>;
+  startTimer(taskId: string): Promise<void>;
+  stopTimer(): Promise<TimeEntrySummary>;
+  createTimeEntry(input: CreateTimeEntryInput): Promise<TimeEntrySummary>;
+  markAllNotificationsRead(): Promise<void>;
+  exportSnapshot(): Promise<string>;
+  importSnapshot(serialized: string): Promise<ImportResult>;
+  resetWorkspace(): Promise<void>;
+  subscribe?(onChange: () => void): () => void;
+}
