@@ -104,6 +104,25 @@ export interface TeamMessage {
   createdAt: string;
 }
 
+export type ChatConversationType = "general" | "channel" | "direct";
+
+export interface ChatConversation {
+  id: string;
+  type: ChatConversationType;
+  name: string;
+  participants: PersonSummary[];
+  createdBy?: string;
+  createdAt: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  conversationId: string;
+  body: string;
+  author: PersonSummary;
+  createdAt: string;
+}
+
 export interface TeamSummary {
   id: string;
   name: string;
@@ -162,6 +181,8 @@ export interface WorkspaceSnapshot {
   weeklyTime: WeeklyTimePoint[];
   timeEntries: TimeEntrySummary[];
   teamMessages: TeamMessage[];
+  chatConversations: ChatConversation[];
+  chatMessages: ChatMessage[];
   activeTimer?: {
     taskId: string;
     taskTitle: string;
@@ -266,6 +287,9 @@ export interface WorkspacePort {
   downloadTaskAttachment(attachmentId: string): Promise<{ blob: Blob; fileName: string }>;
   deleteTaskAttachment(attachmentId: string): Promise<void>;
   sendTeamMessage(body: string): Promise<void>;
+  createChatChannel(name: string): Promise<void>;
+  startDirectChat(userId: string): Promise<string>;
+  sendChatMessage(conversationId: string, body: string): Promise<void>;
   startTimer(taskId: string): Promise<void>;
   stopTimer(): Promise<TimeEntrySummary>;
   createTimeEntry(input: CreateTimeEntryInput): Promise<TimeEntrySummary>;

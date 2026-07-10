@@ -1,4 +1,6 @@
 import type {
+  ChatConversation,
+  ChatMessage,
   CreateProjectInput,
   CreateTaskInput,
   CreateTeamInput,
@@ -78,6 +80,8 @@ interface PersistedWorkspace {
   activities: PersistedActivity[];
   notifications: WorkspaceSnapshot["notifications"];
   teamMessages: TeamMessage[];
+  chatConversations: ChatConversation[];
+  chatMessages: ChatMessage[];
   activeTimer?: PersistedTimer;
 }
 
@@ -91,6 +95,10 @@ function nowIso() {
 
 function id(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function generalChatId(organizationId: string) {
+  return `general-${organizationId}`;
 }
 
 function initials(value: string) {
@@ -123,6 +131,31 @@ function relativeLabel(iso: string) {
   if (hours < 24) return `Hace ${hours} h`;
   const days = Math.floor(hours / 24);
   return `Hace ${days} d`;
+}
+
+function ensureGeneralChat(state: PersistedWorkspace) {
+  for (const org of state.organizations) {
+    if (!state.chatConversations.some((conversation) => conversation.id === generalChatId(org.id))) {
+      state.chatConversations.unshift({
+        id: generalChatId(org.id),
+        type: "general",
+        name: "general",
+        participants: [clone(state.currentUser)],
+        createdBy: state.currentUser.id,
+        createdAt: nowIso(),
+      });
+    }
+  }
+  if (state.teamMessages.length && !state.chatMessages.length) {
+    const conversationId = generalChatId(state.activeOrganizationId);
+    state.chatMessages = state.teamMessages.map((message) => ({
+      id: message.id,
+      conversationId,
+      body: message.body,
+      author: clone(message.author),
+      createdAt: message.createdAt,
+    }));
+  }
 }
 
 function mondayOfCurrentWeek() {
@@ -211,6 +244,8 @@ function safeParse(raw: string): PersistedWorkspace {
   if (!Array.isArray(parsed.activities)) parsed.activities = [];
   if (!Array.isArray(parsed.notifications)) parsed.notifications = [];
   if (!Array.isArray(parsed.teamMessages)) parsed.teamMessages = [];
+  if (!Array.isArray(parsed.chatConversations)) parsed.chatConversations = [];
+  if (!Array.isArray(parsed.chatMessages)) parsed.chatMessages = [];
   parsed.tasks = parsed.tasks!.map((task) => ({
     ...task,
     mode: task.mode ?? "standard",
@@ -230,6 +265,7 @@ function safeParse(raw: string): PersistedWorkspace {
   if (parsed.tasks!.some((task) => !projectIds.has(task.projectId))) throw new Error("El respaldo contiene tareas asociadas a proyectos inexistentes.");
   if (parsed.timeEntries!.some((entry) => !projectIds.has(entry.projectId))) throw new Error("El respaldo contiene tiempo asociado a proyectos inexistentes.");
 
+  ensureGeneralChat(parsed as PersistedWorkspace);
   return parsed as PersistedWorkspace;
 }
 
@@ -266,11 +302,19 @@ function healthFor(project: PersistedProject, tasks: PersistedTask[]): { health:
 }
 
 function deriveSnapshot(state: PersistedWorkspace): WorkspaceSnapshot {
+  ensureGeneralChat(state);
   const org = activeOrg(state);
   const orgTeams = state.teams.filter((team) => team.organizationId === org.id);
   const orgProjects = state.projects.filter((project) => project.organizationId === org.id);
   const orgTasks = state.tasks.filter((task) => task.organizationId === org.id);
   const orgEntries = state.timeEntries.filter((entry) => entry.organizationId === org.id);
+  const chatConversations = state.chatConversations.filter((conversation) =>
+    conversation.id === generalChatId(org.id) ||
+    conversation.participants.some((participant) => participant.id === state.currentUser.id),
+  );
+  const chatConversationIds = new Set(chatConversations.map((conversation) => conversation.id));
+  const chatMessages = state.chatMessages.filter((message) => chatConversationIds.has(message.conversationId)).slice(-300);
+  const generalMessages = chatMessages.filter((message) => message.conversationId === generalChatId(org.id));
 
   const projects: ProjectSummary[] = orgProjects.map((project) => {
     const tasks = orgTasks.filter((task) => task.projectId === project.id);
@@ -377,7 +421,9 @@ function deriveSnapshot(state: PersistedWorkspace): WorkspaceSnapshot {
     notifications: clone(state.notifications),
     weeklyTime,
     timeEntries: orgEntries.map(({ organizationId: _organizationId, ...entry }) => clone(entry)),
-    teamMessages: clone(state.teamMessages),
+    teamMessages: clone(generalMessages),
+    chatConversations: clone(chatConversations),
+    chatMessages: clone(chatMessages),
     activeTimer: state.activeTimer && timerTask ? {
       taskId: timerTask.id,
       taskTitle: timerTask.title,
@@ -477,6 +523,15 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
       activities: [],
       notifications: [],
       teamMessages: [],
+      chatConversations: [{
+        id: generalChatId(organizationId),
+        type: "general",
+        name: "general",
+        participants: [clone(user)],
+        createdBy: user.id,
+        createdAt: nowIso(),
+      }],
+      chatMessages: [],
     };
     activity(state, "creó la organización", org.name);
     save(state);
@@ -498,6 +553,7 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     };
     state.organizations.push(org);
     state.activeOrganizationId = org.id;
+    ensureGeneralChat(state);
     activity(state, "creó la organización", org.name);
     save(state);
     return clone(org);
@@ -768,10 +824,70 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
   }
 
   async sendTeamMessage(body: string): Promise<void> {
+    const state = requireState();
+    await this.sendChatMessage(generalChatId(state.activeOrganizationId), body);
+  }
+
+  async createChatChannel(nameInput: string): Promise<void> {
+    assertText(nameInput, "El nombre del canal");
+    const state = requireState();
+    const name = nameInput.trim().replace(/^#/, "");
+    if (state.chatConversations.some((conversation) => conversation.type !== "direct" && conversation.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error("Ya existe un canal con ese nombre.");
+    }
+    state.chatConversations.push({
+      id: id("chn"),
+      type: "channel",
+      name,
+      participants: [clone(state.currentUser)],
+      createdBy: state.currentUser.id,
+      createdAt: nowIso(),
+    });
+    save(state);
+  }
+
+  async startDirectChat(userId: string): Promise<string> {
+    const state = requireState();
+    if (userId === state.currentUser.id) throw new Error("No puedes abrir un chat directo contigo mismo.");
+    const person = deriveSnapshot(state).workload.find((item) => item.person.id === userId)?.person;
+    if (!person) throw new Error("No encontramos esa persona en tu organización.");
+    const existing = state.chatConversations.find((conversation) =>
+      conversation.type === "direct" &&
+      conversation.participants.some((participant) => participant.id === state.currentUser.id) &&
+      conversation.participants.some((participant) => participant.id === userId),
+    );
+    if (existing) return existing.id;
+    const conversation = {
+      id: id("dm"),
+      type: "direct" as const,
+      name: person.name,
+      participants: [clone(state.currentUser), clone(person)],
+      createdBy: state.currentUser.id,
+      createdAt: nowIso(),
+    };
+    state.chatConversations.push(conversation);
+    save(state);
+    return conversation.id;
+  }
+
+  async sendChatMessage(conversationId: string, body: string): Promise<void> {
     assertText(body, "El mensaje", 1);
     const state = requireState();
-    state.teamMessages.push({ id: id("chat"), body: body.trim(), author: clone(state.currentUser), createdAt: nowIso() });
-    state.teamMessages = state.teamMessages.slice(-100);
+    ensureGeneralChat(state);
+    const conversation = state.chatConversations.find((item) => item.id === conversationId);
+    if (!conversation) throw new Error("No encontramos esa conversación.");
+    state.chatMessages.push({
+      id: id("msg"),
+      conversationId,
+      body: body.trim(),
+      author: clone(state.currentUser),
+      createdAt: nowIso(),
+    });
+    state.chatMessages = state.chatMessages.slice(-500);
+    state.teamMessages = state.chatMessages
+      .filter((message) => message.conversationId === generalChatId(state.activeOrganizationId))
+      .map((message) => ({ id: message.id, body: message.body, author: clone(message.author), createdAt: message.createdAt }))
+      .slice(-100);
     save(state);
   }
 

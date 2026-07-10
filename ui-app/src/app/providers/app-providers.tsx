@@ -81,6 +81,9 @@ interface WorkspaceContextValue {
   downloadTaskAttachment: (attachmentId: string) => Promise<{ blob: Blob; fileName: string }>;
   deleteTaskAttachment: (attachmentId: string) => Promise<void>;
   sendTeamMessage: (body: string) => Promise<void>;
+  createChatChannel: (name: string) => Promise<void>;
+  startDirectChat: (userId: string) => Promise<string>;
+  sendChatMessage: (conversationId: string, body: string) => Promise<void>;
   moveTask: (taskId: string, status: TaskStatus) => Promise<void>;
   startTimer: (taskId: string) => Promise<void>;
   stopTimer: () => Promise<void>;
@@ -334,6 +337,13 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
       },
       deleteTaskAttachment: async (attachmentId) => { await workspacePort.deleteTaskAttachment(attachmentId); await refresh(); },
       sendTeamMessage: async (body) => { await workspacePort.sendTeamMessage(body); await refresh(); },
+      createChatChannel: async (name) => { await workspacePort.createChatChannel(name); await refresh(); },
+      startDirectChat: async (userId) => {
+        const conversationId = await workspacePort.startDirectChat(userId);
+        await refresh();
+        return conversationId;
+      },
+      sendChatMessage: async (conversationId, body) => { await workspacePort.sendChatMessage(conversationId, body); await refresh(); },
       moveTask: async (taskId, status) => { await moveMutation.mutateAsync({ taskId, status }); },
       startTimer: async (taskId) => { await timerStartMutation.mutateAsync(taskId); },
       stopTimer: async () => { await timerStopMutation.mutateAsync(); },

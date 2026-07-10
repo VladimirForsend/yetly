@@ -190,7 +190,7 @@ export async function probeSupabase(config: SupabaseConnectionConfig): Promise<S
   if (!error) {
     return {
       connected: true,
-      schemaReady: typeof data?.version === "number" && data.version >= 13,
+      schemaReady: typeof data?.version === "number" && data.version >= 14,
       schemaVersion: typeof data?.version === "number" ? data.version : undefined,
       message: typeof data?.version === "number"
         ? `Conexión correcta. Esquema Yetly v${data.version} detectado.`

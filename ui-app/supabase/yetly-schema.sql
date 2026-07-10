@@ -1,4 +1,4 @@
--- Yetly Cloud schema v1.3
+-- Yetly Cloud schema v1.4
 -- Ejecutar completo en Supabase Dashboard > SQL Editor.
 -- No requiere service_role en Yetly. La app usa únicamente Project URL + publishable key.
 
@@ -10,7 +10,7 @@ create table if not exists public.yetly_schema_meta (
   installed_at timestamptz not null default now()
 );
 insert into public.yetly_schema_meta (id, version)
-values (1, 13)
+values (1, 14)
 on conflict (id) do update set version = excluded.version;
 
 create table if not exists public.profiles (
@@ -151,6 +151,33 @@ create table if not exists public.team_messages (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.chat_conversations (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  type text not null check (type in ('general','channel','direct')),
+  name text not null check (char_length(trim(name)) >= 1),
+  created_by uuid references auth.users(id) on delete set null,
+  created_at timestamptz not null default now(),
+  unique (organization_id, type, name)
+);
+
+create table if not exists public.chat_participants (
+  conversation_id uuid not null references public.chat_conversations(id) on delete cascade,
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  joined_at timestamptz not null default now(),
+  primary key (conversation_id, user_id)
+);
+
+create table if not exists public.chat_messages (
+  id uuid primary key default gen_random_uuid(),
+  conversation_id uuid not null references public.chat_conversations(id) on delete cascade,
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  author_id uuid not null references auth.users(id) on delete cascade,
+  body text not null check (char_length(trim(body)) >= 1),
+  created_at timestamptz not null default now()
+);
+
 create table if not exists public.time_entries (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -192,6 +219,9 @@ create index if not exists idx_task_messages_task on public.task_messages(task_i
 create index if not exists idx_task_attachments_task on public.task_attachments(task_id, uploaded_at);
 create index if not exists idx_task_events_task on public.task_events(task_id, created_at);
 create index if not exists idx_team_messages_org on public.team_messages(organization_id, created_at);
+create index if not exists idx_chat_conversations_org on public.chat_conversations(organization_id, created_at);
+create index if not exists idx_chat_participants_user on public.chat_participants(user_id);
+create index if not exists idx_chat_messages_conversation on public.chat_messages(conversation_id, created_at);
 create index if not exists idx_time_entries_org on public.time_entries(organization_id);
 create index if not exists idx_time_entries_user on public.time_entries(user_id);
 create index if not exists idx_activities_org on public.activities(organization_id);
@@ -241,6 +271,21 @@ as $$
       on theirs.organization_id = mine.organization_id
     where mine.user_id = auth.uid()
       and theirs.user_id = target_user
+  );
+$$;
+
+create or replace function public.yetly_user_in_org(target_org uuid, target_user uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.organization_members m
+    where m.organization_id = target_org
+      and m.user_id = target_user
   );
 $$;
 
@@ -299,6 +344,16 @@ begin
   insert into public.organization_members (organization_id, user_id, role)
   values (new_org, auth.uid(), 'owner');
 
+  insert into public.chat_conversations (organization_id, type, name, created_by)
+  values (new_org, 'general', 'general', auth.uid())
+  on conflict (organization_id, type, name) do nothing;
+
+  insert into public.chat_participants (conversation_id, organization_id, user_id)
+  select id, organization_id, auth.uid()
+  from public.chat_conversations
+  where organization_id = new_org and type = 'general' and name = 'general'
+  on conflict (conversation_id, user_id) do nothing;
+
   return new_org;
 end;
 $$;
@@ -335,6 +390,16 @@ begin
   values (target_org, auth.uid(), 'member')
   on conflict (organization_id, user_id) do nothing;
 
+  insert into public.chat_conversations (organization_id, type, name, created_by)
+  values (target_org, 'general', 'general', auth.uid())
+  on conflict (organization_id, type, name) do nothing;
+
+  insert into public.chat_participants (conversation_id, organization_id, user_id)
+  select id, organization_id, auth.uid()
+  from public.chat_conversations
+  where organization_id = target_org and type = 'general' and name = 'general'
+  on conflict (conversation_id, user_id) do nothing;
+
   return target_org;
 end;
 $$;
@@ -361,6 +426,27 @@ begin
 end;
 $$;
 
+insert into public.chat_conversations (organization_id, type, name, created_by)
+select org.id, 'general', 'general', org.created_by
+from public.organizations org
+on conflict (organization_id, type, name) do nothing;
+
+insert into public.chat_participants (conversation_id, organization_id, user_id)
+select chat.id, member.organization_id, member.user_id
+from public.chat_conversations chat
+join public.organization_members member on member.organization_id = chat.organization_id
+where chat.type = 'general' and chat.name = 'general'
+on conflict (conversation_id, user_id) do nothing;
+
+insert into public.chat_messages (id, conversation_id, organization_id, author_id, body, created_at)
+select old.id, chat.id, old.organization_id, old.author_id, old.body, old.created_at
+from public.team_messages old
+join public.chat_conversations chat
+  on chat.organization_id = old.organization_id
+ and chat.type = 'general'
+ and chat.name = 'general'
+on conflict (id) do nothing;
+
 alter table public.yetly_schema_meta enable row level security;
 alter table public.profiles enable row level security;
 alter table public.organizations enable row level security;
@@ -374,6 +460,9 @@ alter table public.task_messages enable row level security;
 alter table public.task_attachments enable row level security;
 alter table public.task_events enable row level security;
 alter table public.team_messages enable row level security;
+alter table public.chat_conversations enable row level security;
+alter table public.chat_participants enable row level security;
+alter table public.chat_messages enable row level security;
 alter table public.time_entries enable row level security;
 alter table public.activities enable row level security;
 alter table public.active_timers enable row level security;
@@ -598,6 +687,73 @@ drop policy if exists "members create team messages" on public.team_messages;
 create policy "members create team messages" on public.team_messages for insert to authenticated
 with check (public.yetly_is_org_member(organization_id) and author_id = auth.uid());
 
+drop policy if exists "members read chat conversations" on public.chat_conversations;
+create policy "members read chat conversations" on public.chat_conversations for select to authenticated
+using (
+  public.yetly_is_org_member(organization_id)
+  and (
+    type <> 'direct'
+    or exists (
+      select 1
+      from public.chat_participants p
+      where p.conversation_id = chat_conversations.id
+        and p.user_id = auth.uid()
+    )
+  )
+);
+drop policy if exists "members create chat conversations" on public.chat_conversations;
+create policy "members create chat conversations" on public.chat_conversations for insert to authenticated
+with check (public.yetly_is_org_member(organization_id) and (created_by = auth.uid() or created_by is null));
+
+drop policy if exists "members read chat participants" on public.chat_participants;
+create policy "members read chat participants" on public.chat_participants for select to authenticated
+using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create chat participants" on public.chat_participants;
+create policy "members create chat participants" on public.chat_participants for insert to authenticated
+with check (public.yetly_is_org_member(organization_id) and public.yetly_user_in_org(organization_id, user_id));
+
+drop policy if exists "members read chat messages" on public.chat_messages;
+create policy "members read chat messages" on public.chat_messages for select to authenticated
+using (
+  public.yetly_is_org_member(organization_id)
+  and exists (
+    select 1
+    from public.chat_conversations c
+    where c.id = conversation_id
+      and c.organization_id = organization_id
+      and (
+        c.type <> 'direct'
+        or exists (
+          select 1
+          from public.chat_participants p
+          where p.conversation_id = c.id
+            and p.user_id = auth.uid()
+        )
+      )
+  )
+);
+drop policy if exists "members create chat messages" on public.chat_messages;
+create policy "members create chat messages" on public.chat_messages for insert to authenticated
+with check (
+  public.yetly_is_org_member(organization_id)
+  and author_id = auth.uid()
+  and exists (
+    select 1
+    from public.chat_conversations c
+    where c.id = conversation_id
+      and c.organization_id = organization_id
+      and (
+        c.type <> 'direct'
+        or exists (
+          select 1
+          from public.chat_participants p
+          where p.conversation_id = c.id
+            and p.user_id = auth.uid()
+        )
+      )
+  )
+);
+
 drop policy if exists "members read time entries" on public.time_entries;
 create policy "members read time entries"
 on public.time_entries for select
@@ -672,7 +828,8 @@ using (user_id = auth.uid());
 revoke all on public.yetly_schema_meta, public.profiles, public.organizations,
   public.organization_members, public.teams, public.team_members, public.projects,
   public.tasks, public.task_checklist_items, public.task_messages, public.task_attachments,
-  public.task_events, public.team_messages, public.time_entries, public.activities, public.active_timers
+  public.task_events, public.team_messages, public.chat_conversations, public.chat_participants,
+  public.chat_messages, public.time_entries, public.activities, public.active_timers
 from anon, authenticated;
 
 grant select on public.yetly_schema_meta to anon, authenticated;
@@ -688,6 +845,9 @@ grant select, insert on public.task_messages to authenticated;
 grant select, insert, update on public.task_attachments to authenticated;
 grant select, insert on public.task_events to authenticated;
 grant select, insert on public.team_messages to authenticated;
+grant select, insert on public.chat_conversations to authenticated;
+grant select, insert on public.chat_participants to authenticated;
+grant select, insert on public.chat_messages to authenticated;
 grant select, insert, update, delete on public.time_entries to authenticated;
 grant select, insert on public.activities to authenticated;
 grant select, insert, update, delete on public.active_timers to authenticated;
@@ -695,6 +855,7 @@ grant select, insert, update, delete on public.active_timers to authenticated;
 grant execute on function public.yetly_is_org_member(uuid) to authenticated;
 grant execute on function public.yetly_is_org_admin(uuid) to authenticated;
 grant execute on function public.yetly_share_org_with(uuid) to authenticated;
+grant execute on function public.yetly_user_in_org(uuid, uuid) to authenticated;
 grant execute on function public.yetly_upsert_my_profile(text, text) to authenticated;
 grant execute on function public.yetly_create_organization(text, text, text) to authenticated;
 grant execute on function public.yetly_join_organization(text, text, text) to authenticated;
@@ -791,6 +952,21 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table public.team_messages;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.chat_conversations;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.chat_participants;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.chat_messages;
 exception when duplicate_object then null;
 end $$;
 

@@ -1,5 +1,7 @@
 import type { RealtimeChannel, SupabaseClient, User } from "@supabase/supabase-js";
 import type {
+  ChatConversation,
+  ChatMessage,
   CreateProjectInput,
   CreateTaskInput,
   CreateTeamInput,
@@ -215,6 +217,9 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       attachmentsResult,
       taskEventsResult,
       teamMessagesResult,
+      chatConversationsResult,
+      chatParticipantsResult,
+      chatMessagesResult,
     ] = await Promise.all([
       this.client.from("organizations").select("id,name,color,invite_code").in("id", orgIds),
       this.client.from("profiles").select("id,full_name,role_title").eq("id", user.id).maybeSingle(),
@@ -230,16 +235,24 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       this.client.from("task_attachments").select("*").eq("organization_id", activeId).order("uploaded_at"),
       this.client.from("task_events").select("*").eq("organization_id", activeId).order("created_at", { ascending: false }).limit(300),
       this.client.from("team_messages").select("*").eq("organization_id", activeId).order("created_at", { ascending: false }).limit(100),
+      this.client.from("chat_conversations").select("*").eq("organization_id", activeId).order("created_at"),
+      this.client.from("chat_participants").select("*").eq("organization_id", activeId),
+      this.client.from("chat_messages").select("*").eq("organization_id", activeId).order("created_at", { ascending: false }).limit(300),
     ]);
 
     const firstError = [
       orgResult.error, profileResult.error, teamsResult.error, orgMembersResult.error,
       projectsResult.error, tasksResult.error, entriesResult.error, activitiesResult.error, timerResult.error,
       checklistResult.error, taskMessagesResult.error, attachmentsResult.error, taskEventsResult.error, teamMessagesResult.error,
+      chatConversationsResult.error, chatParticipantsResult.error, chatMessagesResult.error,
     ].find(Boolean);
     if (firstError) throw asError(firstError, "No pudimos cargar el workspace cloud.");
 
-    const memberIds = (orgMembersResult.data ?? []).map((row: Row) => row.user_id as string);
+    const chatParticipantRows = chatParticipantsResult.data as Row[] ?? [];
+    const memberIds = Array.from(new Set([
+      ...(orgMembersResult.data ?? []).map((row: Row) => row.user_id as string),
+      ...chatParticipantRows.map((row) => row.user_id as string),
+    ]));
     const teamIds = (teamsResult.data ?? []).map((row: Row) => row.id as string);
 
     const [profilesResult, teamMembersResult] = await Promise.all([
@@ -294,6 +307,8 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     const attachmentRows = attachmentsResult.data as Row[] ?? [];
     const taskEventRows = taskEventsResult.data as Row[] ?? [];
     const teamMessageRows = teamMessagesResult.data as Row[] ?? [];
+    const chatConversationRows = chatConversationsResult.data as Row[] ?? [];
+    const chatMessageRows = chatMessagesResult.data as Row[] ?? [];
     const cachedAttachmentIds = new Set<string>();
     await Promise.all(attachmentRows.map(async (attachment) => {
       if (await hasCachedTaskFile(attachmentCacheKey(attachment.id, Number(attachment.version || 1)))) cachedAttachmentIds.add(attachment.id);
@@ -431,6 +446,29 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       }
     }
 
+    const chatConversations: ChatConversation[] = chatConversationRows.map((conversation) => {
+      const participants = chatParticipantRows
+        .filter((participant) => participant.conversation_id === conversation.id)
+        .map((participant) => profiles.get(participant.user_id))
+        .filter((person): person is PersonSummary => Boolean(person));
+      const other = participants.find((participant) => participant.id !== user.id);
+      return {
+        id: conversation.id,
+        type: conversation.type,
+        name: conversation.type === "direct" ? (other?.name ?? "Mensaje directo") : conversation.name,
+        participants,
+        createdBy: conversation.created_by || undefined,
+        createdAt: conversation.created_at,
+      };
+    });
+    const chatMessages: ChatMessage[] = chatMessageRows.reverse().map((message) => ({
+      id: message.id,
+      conversationId: message.conversation_id,
+      body: message.body,
+      author: profiles.get(message.author_id) ?? currentUser,
+      createdAt: message.created_at,
+    }));
+
     const timer = timerResult.data as Row | null;
     const timerTask = timer ? tasks.find((task) => task.id === timer.task_id) : undefined;
 
@@ -466,6 +504,8 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         author: profiles.get(message.author_id) ?? currentUser,
         createdAt: message.created_at,
       })),
+      chatConversations,
+      chatMessages,
       activeTimer: timer && timerTask ? {
         taskId: timerTask.id,
         taskTitle: timerTask.title,
@@ -847,16 +887,82 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   async sendTeamMessage(body: string): Promise<void> {
+    const snapshot = await this.getSnapshot();
+    const general = snapshot?.chatConversations.find((conversation) => conversation.type === "general");
+    if (!general) throw new Error("No encontramos el chat general.");
+    await this.sendChatMessage(general.id, body);
+  }
+
+  async createChatChannel(nameInput: string): Promise<void> {
+    assertText(nameInput, "El nombre del canal");
+    const user = await this.requireUser();
+    const snapshot = await this.getSnapshot();
+    if (!snapshot) throw new Error("No hay organización activa.");
+    const name = nameInput.trim().replace(/^#/, "");
+    const { error } = await this.client.from("chat_conversations").insert({
+      organization_id: snapshot.activeOrganization.id,
+      type: "channel",
+      name,
+      created_by: user.id,
+    });
+    if (error) throw asError(error, "No pudimos crear el canal.");
+  }
+
+  async startDirectChat(userId: string): Promise<string> {
+    const user = await this.requireUser();
+    if (userId === user.id) throw new Error("No puedes abrir un chat directo contigo mismo.");
+    const snapshot = await this.getSnapshot();
+    if (!snapshot) throw new Error("No hay organización activa.");
+    const target = snapshot.workload.find((item) => item.person.id === userId)?.person;
+    if (!target) throw new Error("No encontramos esa persona en tu organización.");
+    const existing = snapshot.chatConversations.find((conversation) =>
+      conversation.type === "direct" &&
+      conversation.participants.some((participant) => participant.id === user.id) &&
+      conversation.participants.some((participant) => participant.id === userId),
+    );
+    if (existing) return existing.id;
+
+    const directName = [user.id, userId].sort().join(":");
+    const { data: conversation, error } = await this.client.from("chat_conversations").insert({
+      organization_id: snapshot.activeOrganization.id,
+      type: "direct",
+      name: directName,
+      created_by: user.id,
+    }).select("id").single();
+    if (error) {
+      const { data: existing, error: existingError } = await this.client.from("chat_conversations")
+        .select("id")
+        .eq("organization_id", snapshot.activeOrganization.id)
+        .eq("type", "direct")
+        .eq("name", directName)
+        .maybeSingle();
+      if (existingError || !existing) throw asError(error, "No pudimos crear el mensaje directo.");
+      return existing.id as string;
+    }
+    const conversationId = conversation.id as string;
+    const { error: participantError } = await this.client.from("chat_participants").insert([
+      { conversation_id: conversationId, organization_id: snapshot.activeOrganization.id, user_id: user.id },
+      { conversation_id: conversationId, organization_id: snapshot.activeOrganization.id, user_id: userId },
+    ]);
+    if (participantError) throw asError(participantError, "No pudimos agregar participantes al mensaje directo.");
+    return conversationId;
+  }
+
+  async sendChatMessage(conversationId: string, body: string): Promise<void> {
     assertText(body, "El mensaje", 1);
     const user = await this.requireUser();
     const snapshot = await this.getSnapshot();
     if (!snapshot) throw new Error("No hay organización activa.");
-    const { error } = await this.client.from("team_messages").insert({
+    if (!snapshot.chatConversations.some((conversation) => conversation.id === conversationId)) {
+      throw new Error("No encontramos esa conversación.");
+    }
+    const { error } = await this.client.from("chat_messages").insert({
+      conversation_id: conversationId,
       organization_id: snapshot.activeOrganization.id,
       author_id: user.id,
       body: body.trim(),
     });
-    if (error) throw asError(error, "No pudimos enviar el mensaje al equipo.");
+    if (error) throw asError(error, "No pudimos enviar el mensaje.");
   }
 
   async startTimer(taskId: string): Promise<void> {
@@ -1032,7 +1138,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   subscribe(onChange: () => void): () => void {
-    const tables = ["projects", "tasks", "task_checklist_items", "task_messages", "task_attachments", "task_events", "team_messages", "time_entries", "teams", "team_members", "organization_members", "profiles"];
+    const tables = ["projects", "tasks", "task_checklist_items", "task_messages", "task_attachments", "task_events", "team_messages", "chat_conversations", "chat_participants", "chat_messages", "time_entries", "teams", "team_members", "organization_members", "profiles"];
     let channel: RealtimeChannel = this.client.channel(`yetly-workspace-${crypto.randomUUID()}`);
     for (const table of tables) {
       channel = channel.on(
