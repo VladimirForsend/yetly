@@ -18,7 +18,7 @@ import {
 import { useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
-import { getPublishedSupabaseConfig } from "../../../infrastructure/supabase/supabase-connection";
+import { createYetlyInviteMessage } from "../../../shared/lib/yetly-invite";
 import { Button } from "../../../shared/ui/button";
 import { PageHeader } from "../../../shared/ui/page-header";
 import { OllamaSettings } from "../../ai/components/ollama-settings";
@@ -89,19 +89,7 @@ export function SettingsPage() {
     const code = snapshot?.activeOrganization.inviteCode;
     if (!code || !supabaseConfig) return;
     const baseUrl = `${window.location.origin}${window.location.pathname}`;
-    const params = new URLSearchParams({ invite: code });
-    if (!getPublishedSupabaseConfig()) {
-      params.set("supabaseUrl", supabaseConfig.url);
-      params.set("publishableKey", supabaseConfig.publishableKey);
-    }
-    const inviteUrl = `${baseUrl}#/connect-supabase?${params.toString()}`;
-    await navigator.clipboard.writeText([
-      "Te invito a Yetly.",
-      "",
-      `Entra aquí: ${inviteUrl}`,
-      "",
-      "Crea tu cuenta o inicia sesión. La invitación ya va incluida.",
-    ].join("\n"));
+    await navigator.clipboard.writeText(createYetlyInviteMessage(baseUrl, code, supabaseConfig));
     setConnectionMessage("Invitación copiada. Envíala a la persona que quieres sumar.");
   }
 
@@ -109,9 +97,11 @@ export function SettingsPage() {
     setConnectionMessage("");
     try {
       const code = await rotateInviteCode();
-      await navigator.clipboard.writeText(code);
+      if (!supabaseConfig) throw new Error("Falta la conexión pública de Supabase.");
+      const baseUrl = `${window.location.origin}${window.location.pathname}`;
+      await navigator.clipboard.writeText(createYetlyInviteMessage(baseUrl, code, supabaseConfig));
       refetch();
-      setConnectionMessage("Código renovado y copiado. El anterior ya no sirve.");
+      setConnectionMessage("Invitación renovada y copiada con su enlace completo. La anterior ya no sirve.");
     } catch (cause) {
       setConnectionMessage(cause instanceof Error ? cause.message : "No pudimos renovar el código.");
     }

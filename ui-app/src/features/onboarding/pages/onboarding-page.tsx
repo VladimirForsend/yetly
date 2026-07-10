@@ -256,6 +256,10 @@ export function OnboardingPage() {
                 <p className="mt-5 max-w-2xl text-base leading-7 text-ink-600">
                   Yetly funciona sin login en este navegador. Conectar Supabase sirve para iniciar sesión, compartir datos con otras personas y ver cambios entre equipos.
                 </p>
+                <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4 text-sm leading-6 text-blue-900">
+                  <p className="font-black">Tus datos locales no se borran ni se suben automáticamente</p>
+                  <p className="mt-1">La nube será un espacio separado. Si quieres llevar tu trabajo actual, exporta un respaldo antes y luego impórtalo dentro del espacio Supabase.</p>
+                </div>
                 <div className="mt-7 flex flex-wrap gap-3">
                   <Button onClick={() => setStep(1)}>
                     Conectar Supabase <ArrowRight className="h-4 w-4" aria-hidden="true" />
@@ -293,6 +297,17 @@ export function OnboardingPage() {
               <p className="mt-3 max-w-3xl text-sm leading-6 text-ink-600">
                 Supabase será la “caja fuerte online” de tu Yetly. Crea un proyecto, copia dos datos públicos y vuelve aquí.
               </p>
+
+              <div className="mt-5 grid gap-3 sm:grid-cols-2">
+                <div className="rounded-2xl border border-brand-200 bg-brand-50 p-4">
+                  <p className="text-sm font-black text-brand-900">Si eres dueño del espacio</p>
+                  <p className="mt-1 text-sm leading-6 text-brand-800">Sigue estos pasos una sola vez, instala el SQL v1.6 y después invita al equipo mediante el enlace que genera Yetly.</p>
+                </div>
+                <div className="rounded-2xl border border-success-600/20 bg-success-50 p-4">
+                  <p className="text-sm font-black text-success-800">Si recibiste una invitación</p>
+                  <p className="mt-1 text-sm leading-6 text-success-700">Abre el enlace completo enviado por el dueño. No debes crear otro Supabase ni ejecutar SQL.</p>
+                </div>
+              </div>
 
               <ol className="mt-7 grid gap-4 lg:grid-cols-3">
                 <li className="rounded-2xl border border-slate-200 p-5">
@@ -362,16 +377,20 @@ export function OnboardingPage() {
           {step === 2 && (
             <div className="grid gap-8 lg:grid-cols-[.9fr_1.1fr]">
               <div>
-                <p className="text-sm font-black uppercase tracking-wider text-brand-700">2. Instala Yetly en tu base</p>
+                <p className="text-sm font-black uppercase tracking-wider text-brand-700">2. Instala Yetly v1.6 en tu base</p>
                 <h1 className="mt-2 text-3xl font-black tracking-[-0.045em] text-ink-950">Copiar, pegar, ejecutar.</h1>
                 <p className="mt-3 text-sm leading-6 text-ink-600">
-                  Tu proyecto Supabase está vacío. Este instalador crea las tablas de Yetly, permisos RLS, códigos de invitación y Realtime.
+                  El instalador actual corresponde al esquema interno 16. Crea o actualiza las tablas de Yetly, permisos RLS, invitaciones, chat, checklist, IA y Realtime.
                 </p>
+                <div className="mt-4 rounded-2xl border border-warning-200 bg-warning-50 p-4 text-sm leading-6 text-warning-900">
+                  <p className="font-black">Solo el dueño realiza esta instalación</p>
+                  <p className="mt-1">Copia y ejecuta el bloque completo, incluso si instalaste una versión anterior. El SQL está preparado para actualizar la instalación existente sin borrar proyectos ni tareas.</p>
+                </div>
                 <ol className="mt-6 space-y-4">
                   {[
                     ["Abre SQL Editor", "Usa el botón directo de abajo."],
                     ["Pulsa “New query”", "Se abrirá un editor grande."],
-                    ["Pega todo el SQL", "No cambies trozos sueltos."],
+                    ["Pega todo el SQL v1.6", "Copia el bloque completo; no ejecutes fragmentos sueltos."],
                     ["Pulsa Run", "Espera el mensaje de éxito."],
                     ["Vuelve aquí", "Pulsa Verificar instalación."],
                   ].map(([title, text], index) => (
@@ -394,7 +413,10 @@ export function OnboardingPage() {
                 </div>
               </div>
               <div>
-                <label className="text-sm font-black text-ink-900" htmlFor="yetly-schema-sql">Instalador completo</label>
+                <div className="flex items-center justify-between gap-3">
+                  <label className="text-sm font-black text-ink-900" htmlFor="yetly-schema-sql">Instalador completo</label>
+                  <span className="rounded-full bg-success-50 px-3 py-1 text-xs font-black text-success-700">Actual · v1.6 / esquema 16</span>
+                </div>
                 <textarea
                   id="yetly-schema-sql"
                   readOnly

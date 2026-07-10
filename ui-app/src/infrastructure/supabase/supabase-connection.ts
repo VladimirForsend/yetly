@@ -14,6 +14,8 @@ export interface SupabaseProbeResult {
   message: string;
 }
 
+export const REQUIRED_YETLY_SCHEMA_VERSION = 16;
+
 const CONNECTION_KEY = "yetly:v1:connection";
 const LEGACY_LOCAL_MODE = { mode: "local" as const };
 
@@ -188,13 +190,17 @@ export async function probeSupabase(config: SupabaseConnectionConfig): Promise<S
     .maybeSingle();
 
   if (!error) {
+    const detectedVersion = typeof data?.version === "number" ? data.version : undefined;
+    const schemaReady = detectedVersion !== undefined && detectedVersion >= REQUIRED_YETLY_SCHEMA_VERSION;
     return {
       connected: true,
-      schemaReady: typeof data?.version === "number" && data.version >= 16,
-      schemaVersion: typeof data?.version === "number" ? data.version : undefined,
-      message: typeof data?.version === "number"
-        ? `Conexión correcta. Esquema Yetly v${data.version} detectado.`
-        : "Conexión correcta, pero el esquema Yetly todavía no está instalado.",
+      schemaReady,
+      schemaVersion: detectedVersion,
+      message: detectedVersion === undefined
+        ? "Conexión correcta, pero el esquema Yetly todavía no está instalado."
+        : schemaReady
+          ? `Conexión correcta. Esquema Yetly v${detectedVersion} actualizado.`
+          : `Conexión correcta, pero tu esquema Yetly v${detectedVersion} está desactualizado. Ejecuta el instalador completo para subir a v${REQUIRED_YETLY_SCHEMA_VERSION}.`,
     };
   }
 

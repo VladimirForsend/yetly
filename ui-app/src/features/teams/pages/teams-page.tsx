@@ -8,6 +8,7 @@ import { Avatar } from "../../../shared/ui/avatar";
 import { Button } from "../../../shared/ui/button";
 import { PageHeader } from "../../../shared/ui/page-header";
 import { EmptyState, ErrorState, LoadingState } from "../../../shared/ui/state-panel";
+import { createYetlyInviteMessage } from "../../../shared/lib/yetly-invite";
 
 function CreateTeamDialog() {
   const { createTeam, isMutating } = useWorkspace();
@@ -102,7 +103,7 @@ function ManageMembersDialog({ team }: { team: TeamSummary }) {
 
 export function TeamsPage() {
   const navigate = useNavigate();
-  const { snapshot, storageMode, isLoading, isError, error, refetch, deleteTeam, isMutating } = useWorkspace();
+  const { snapshot, storageMode, supabaseConfig, isLoading, isError, error, refetch, deleteTeam, isMutating } = useWorkspace();
   const [copyMessage, setCopyMessage] = useState("");
 
   if (isLoading) return <LoadingState label="Cargando equipos…" />;
@@ -119,9 +120,10 @@ export function TeamsPage() {
 
   async function copyInvite() {
     const code = snapshot?.activeOrganization.inviteCode;
-    if (!code) return;
-    await navigator.clipboard.writeText(code);
-    setCopyMessage("Código copiado.");
+    if (!code || !supabaseConfig) return;
+    const baseUrl = `${window.location.origin}${window.location.pathname}`;
+    await navigator.clipboard.writeText(createYetlyInviteMessage(baseUrl, code, supabaseConfig));
+    setCopyMessage("Enlace de invitación copiado. Incluye la conexión y el código del equipo.");
   }
 
   return (
@@ -148,10 +150,10 @@ export function TeamsPage() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="font-black text-ink-950">Invita personas a {snapshot.activeOrganization.name}</h2>
-              <p className="mt-1 text-sm leading-6 text-ink-600">Comparten el mismo proyecto Supabase, crean su cuenta y usan este código durante el onboarding.</p>
+              <p className="mt-1 text-sm leading-6 text-ink-600">Copia el enlace completo. La otra persona abrirá Yetly con la conexión y este código ya preparados.</p>
               <code className="mt-3 inline-block rounded-xl bg-slate-950 px-4 py-3 font-mono text-base font-black tracking-[.18em] text-white">{snapshot.activeOrganization.inviteCode}</code>
             </div>
-            <Button onClick={() => void copyInvite()}><Copy className="h-4 w-4" aria-hidden="true" /> Copiar código</Button>
+            <Button onClick={() => void copyInvite()}><Copy className="h-4 w-4" aria-hidden="true" /> Copiar enlace de invitación</Button>
           </div>
           {copyMessage && <p className="mt-3 text-sm font-bold text-success-700" role="status">{copyMessage}</p>}
         </section>
