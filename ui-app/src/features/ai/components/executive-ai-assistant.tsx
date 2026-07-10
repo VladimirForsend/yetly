@@ -218,11 +218,12 @@ export function ExecutiveAiAssistant() {
       const selectedProject = snapshot.projects.find((item) => item.id === scope.projectId)!;
       const selectedTask = scope.taskId ? snapshot.tasks.find((item) => item.id === scope.taskId) : undefined;
       const scopeLabel = selectedTask
-        ? `la tarea "${selectedTask.title}" (ID ${selectedTask.id}) del proyecto "${selectedProject.name}" (ID ${selectedProject.id})`
-        : `el proyecto completo "${selectedProject.name}" (ID ${selectedProject.id})`;
+        ? `la tarea "${selectedTask.title}" del proyecto "${selectedProject.name}"`
+        : `el proyecto completo "${selectedProject.name}"`;
       const groundedPrompt = `ALCANCE ACTUAL: ${scopeLabel}.
 Yetly adjuntó en YETLY_DATA una fotografía real con ${context.metadata.includedTasks} tarea(s), métricas deterministas, responsables, fechas, carga, tiempos y conexiones disponibles.
 No solicites al usuario que vuelva a indicar el proyecto, la tarea ni los datos: ya están incluidos. Si algún campo específico no existe, indícalo como información faltante.
+En tu respuesta final no escribas IDs, UUIDs ni identificadores internos. Cuando hables de tareas usa siempre sus títulos; cuando hables del alcance usa el nombre del proyecto.
 
 SOLICITUD ACTUAL:
 ${prompt.trim()}`;
@@ -231,7 +232,8 @@ ${prompt.trim()}`;
             role: "system",
             content: `${EXECUTIVE_SYSTEM_PROMPT}
 
-El contexto real requerido para responder está incluido a continuación. Analízalo directamente y nunca pidas que el usuario vuelva a seleccionar o describir el alcance. Para conexiones nuevas puedes usar el clientRef de una tarea propuesta. Usa siempre IDs exactos incluidos en los datos.
+El contexto real requerido para responder está incluido a continuación. Analízalo directamente y nunca pidas que el usuario vuelva a seleccionar o describir el alcance. Para conexiones nuevas puedes usar el clientRef de una tarea propuesta.
+En reportes y análisis para el usuario no muestres IDs ni UUIDs. Usa títulos de tareas, nombres de proyectos y nombres de personas.
 
 YETLY_DATA_BEGIN
 ${context.serialized}

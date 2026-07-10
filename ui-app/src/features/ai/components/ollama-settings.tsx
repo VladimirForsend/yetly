@@ -30,7 +30,7 @@ export function OllamaSettings() {
     try {
       const provisional = { apiKey: key, remember, defaultModel: selectedModel || current?.defaultModel };
       const items = await listOllamaModels(provisional);
-      if (!items.length) throw new Error("La cuenta no devolvió modelos disponibles.");
+      if (!items.length) throw new Error("Ollama no devolvió modelos Gemma disponibles para esta cuenta.");
       let model = choosePreferredOllamaModel(items, selectedModel || current?.defaultModel);
       try {
         await validateOllamaApiKey(provisional, model);

@@ -30,14 +30,14 @@ export class OllamaApiError extends Error {
 }
 
 function friendlyError(status: number, fallback: string) {
-  if (status === 401 || status === 403) return "Ollama rechazó la API key o el modelo seleccionado. Prueba con gpt-oss:20b o crea una clave nueva en Ollama Cloud.";
+  if (status === 401 || status === 403) return "Ollama rechazó la API key o el modelo Gemma seleccionado. Prueba con otro Gemma o crea una clave nueva en Ollama Cloud.";
   if (status === 404) return "El modelo ya no está disponible en Ollama Cloud.";
   if (status === 429) return "Ollama alcanzó el límite de uso. Espera un momento y vuelve a intentar.";
   if (status >= 500) return "Ollama Cloud está temporalmente indisponible. Vuelve a intentar en unos minutos.";
   return fallback || "Ollama rechazó la solicitud.";
 }
 
-const preferredModels = ["gpt-oss:20b", "gpt-oss:120b", "qwen3.5:397b", "glm-5.2"];
+const preferredModels = ["gemma4:31b", "gemma3:27b", "gemma3:12b", "gemma3:4b"];
 
 export function choosePreferredOllamaModel(models: OllamaModel[], requestedModel?: string) {
   if (requestedModel && models.some((item) => item.model === requestedModel)) return requestedModel;
@@ -98,7 +98,7 @@ export async function listOllamaModels(config: OllamaConfig): Promise<OllamaMode
     parameterSize: model.details?.parameter_size,
     family: model.details?.family,
     capabilities: [] as string[],
-  })).filter((model) => model.model);
+  })).filter((model) => model.model.toLowerCase().startsWith("gemma"));
   const result = [...base];
   let cursor = 0;
   async function inspectNext() {

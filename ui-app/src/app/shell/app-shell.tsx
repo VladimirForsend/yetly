@@ -3,6 +3,7 @@ import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import {
   BarChart3,
   Bell,
+  Bot,
   ChevronDown,
   Clock3,
   CircleHelp,
@@ -28,6 +29,7 @@ import { TeamChat } from "../../features/chat/components/team-chat";
 
 const navigation = [
   { to: "/home", label: "Inicio", Icon: Home },
+  { to: "/ai", label: "Yetly AI", Icon: Bot },
   { to: "/my-work", label: "Mi trabajo", Icon: Zap },
   { to: "/inbox", label: "Bandeja", Icon: Inbox },
   { to: "/projects", label: "Proyectos", Icon: FolderKanban },
@@ -40,6 +42,7 @@ const navigation = [
 
 const routeLabels: Record<string, string> = {
   "/home": "Inicio",
+  "/ai": "Yetly AI",
   "/my-work": "Mi trabajo",
   "/inbox": "Bandeja",
   "/projects": "Proyectos",

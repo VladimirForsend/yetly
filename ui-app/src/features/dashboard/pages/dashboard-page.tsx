@@ -17,7 +17,6 @@ import { ProgressBar } from "../../../shared/ui/progress-bar";
 import { ErrorState, LoadingState } from "../../../shared/ui/state-panel";
 import { QuickAddDialog } from "../../tasks/components/quick-add-dialog";
 import { CreateProjectDialog } from "../../projects/components/create-project-dialog";
-import { ExecutiveAiAssistant } from "../../ai/components/executive-ai-assistant";
 
 function MetricCard({
   label,
@@ -271,8 +270,6 @@ export function DashboardPage() {
           </ol>
         </section>
       </div>
-
-      <ExecutiveAiAssistant />
     </div>
   );
 }

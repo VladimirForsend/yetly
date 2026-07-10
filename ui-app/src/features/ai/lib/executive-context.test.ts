@@ -26,6 +26,10 @@ describe("buildExecutiveContext", () => {
     expect(payload.signals.overloadedPeople[0].name).toBe("Vladimir");
     expect(payload.tasks[0].attachments[0].fileName).toBe("brief.pdf");
     expect(result.serialized).not.toContain("cachedLocally");
+    expect(result.serialized).not.toContain("task-1");
+    expect(result.serialized).not.toContain("project-1");
+    expect(result.serialized).not.toContain("user-1");
+    expect(result.serialized).not.toContain("file-1");
     expect(result.metadata.includedTasks).toBe(1);
   });
 });
