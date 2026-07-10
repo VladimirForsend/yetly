@@ -6,6 +6,7 @@ import { useWorkspace } from "../../../app/providers/app-providers";
 import { formatMinutes } from "../../../shared/lib/format";
 import { Avatar } from "../../../shared/ui/avatar";
 import { Button } from "../../../shared/ui/button";
+import { ProgressBar } from "../../../shared/ui/progress-bar";
 
 const statusOptions: Array<{ value: TaskStatus; label: string }> = [
   { value: "backlog", label: "Backlog" },
@@ -46,6 +47,7 @@ export function TaskDrawer({
   const [assigneeId, setAssigneeId] = useState("");
   const [mode, setMode] = useState<TaskMode>("standard");
   const [checklistText, setChecklistText] = useState("");
+  const [pendingChecklist, setPendingChecklist] = useState<Record<string, boolean>>({});
   const [messageText, setMessageText] = useState("");
   const [busySection, setBusySection] = useState(false);
   const replacementTarget = useRef<string>();
@@ -67,7 +69,7 @@ export function TaskDrawer({
     setMode(task.mode);
     setError("");
     setSuccess("");
-  }, [task]);
+  }, [task?.id]);
 
   if (!task) return null;
   const currentTask = task;
@@ -146,6 +148,22 @@ export function TaskDrawer({
     });
   }
 
+  async function toggleCheckItem(itemId: string, completed: boolean) {
+    setPendingChecklist((current) => ({ ...current, [itemId]: true }));
+    setError("");
+    try {
+      await setChecklistItemCompleted(itemId, completed);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No fue posible actualizar el checklist.");
+    } finally {
+      setPendingChecklist((current) => {
+        const next = { ...current };
+        delete next[itemId];
+        return next;
+      });
+    }
+  }
+
   async function handleUpload(file?: File) {
     if (!file) return;
     await runSection(() => uploadTaskAttachment(currentTask.id, file), "Adjunto disponible para el equipo y guardado en este navegador.");
@@ -175,12 +193,15 @@ export function TaskDrawer({
   const timerIsThisTask = snapshot?.activeTimer?.taskId === task.id;
   const canEdit = task.canEdit;
   const isAdmin = snapshot?.activeOrganization.memberRole === "owner" || snapshot?.activeOrganization.memberRole === "admin";
+  const checklistTotal = task.checklist.length;
+  const checklistCompleted = task.checklist.filter((item) => item.completed).length;
+  const checklistProgress = checklistTotal > 0 ? Math.round((checklistCompleted / checklistTotal) * 100) : task.completed ? 100 : 0;
 
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[80] bg-ink-950/30" />
-        <Dialog.Content className="fixed inset-y-0 right-0 z-[90] w-full max-w-xl overflow-y-auto border-l border-slate-200 bg-white shadow-float focus:outline-none" aria-describedby="task-drawer-description">
+        <Dialog.Content className="fixed inset-y-0 right-0 z-[90] flex w-full max-w-xl flex-col overflow-y-auto border-l border-slate-200 bg-white shadow-float focus:outline-none sm:w-[min(100%,36rem)]" aria-describedby="task-drawer-description">
           <form className="min-h-full" onSubmit={save}>
             <header className="sticky top-0 z-10 border-b border-slate-200 bg-white/95 px-5 py-4 backdrop-blur sm:px-7">
               <div className="flex items-start justify-between gap-4">
@@ -197,7 +218,7 @@ export function TaskDrawer({
               </div>
             </header>
 
-            <div className="space-y-6 px-5 py-6 sm:px-7">
+            <div className="space-y-6 px-4 py-5 sm:px-7 sm:py-6">
               <label className="block">
                 <span className="text-sm font-black text-ink-900">Título</span>
                 <input value={title} onChange={(event) => setTitle(event.target.value)} required minLength={2} disabled={!canEdit} className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-100 disabled:bg-slate-50 disabled:text-ink-500" />
@@ -284,11 +305,16 @@ export function TaskDrawer({
 
               {mode === "checklist" && (
                 <section className="rounded-2xl border border-slate-200 p-4" aria-labelledby="checklist-heading">
-                  <h2 id="checklist-heading" className="flex items-center gap-2 text-sm font-black text-ink-950"><CheckSquare className="h-4 w-4 text-brand-600" /> Checklist</h2>
+                  <div className="flex items-start justify-between gap-4">
+                    <h2 id="checklist-heading" className="flex items-center gap-2 text-sm font-black text-ink-950"><CheckSquare className="h-4 w-4 text-brand-600" /> Checklist</h2>
+                    <span className="shrink-0 text-sm font-black tabular-nums text-brand-700">{checklistProgress}%</span>
+                  </div>
+                  <ProgressBar value={checklistProgress} label={`Avance del checklist de ${task.title}`} className="mt-3 h-2.5" />
+                  <p className="mt-2 text-xs font-semibold text-ink-500">{checklistCompleted} de {checklistTotal} elementos completados</p>
                   <div className="mt-3 space-y-2">
                     {task.checklist.length ? task.checklist.map((item) => (
                       <div key={item.id} className="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
-                        <input type="checkbox" checked={item.completed} disabled={busySection} onChange={(event) => void runSection(() => setChecklistItemCompleted(item.id, event.target.checked))} className="h-5 w-5 rounded border-slate-300 text-brand-600 focus:ring-brand-500" />
+                        <input type="checkbox" checked={item.completed} disabled={Boolean(pendingChecklist[item.id])} onChange={(event) => void toggleCheckItem(item.id, event.target.checked)} className="h-5 w-5 shrink-0 rounded border-slate-300 text-brand-600 focus:ring-brand-500" />
                         <span className={`min-w-0 flex-1 text-sm font-semibold ${item.completed ? "text-ink-400 line-through" : "text-ink-800"}`}>{item.text}</span>
                         {(item.createdBy === snapshot?.currentUser.id || isAdmin) && <button type="button" onClick={() => void runSection(() => deleteChecklistItem(item.id))} className="rounded-lg p-2 text-ink-400 hover:bg-danger-50 hover:text-danger-700" aria-label={`Eliminar ${item.text}`}><Trash2 className="h-4 w-4" /></button>}
                       </div>

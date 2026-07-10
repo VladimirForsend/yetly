@@ -127,6 +127,13 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
     await client.invalidateQueries({ queryKey: ["workspace"] });
   };
 
+  // Update the visible workspace immediately and let Supabase reconcile in the background.
+  // This keeps small interactions (like checking an item) responsive on high-latency networks.
+  const workspaceQueryKey = ["workspace", activeOrganizationId ?? "default", connectionRevision] as const;
+  const patchWorkspace = (patch: (current: WorkspaceSnapshot) => WorkspaceSnapshot) => {
+    client.setQueryData<WorkspaceSnapshot>(workspaceQueryKey, (current) => current ? patch(current) : current);
+  };
+
   const refreshCloudUser = async () => {
     if (getStorageMode() !== "supabase") {
       setCloudUserEmail(undefined);
@@ -328,10 +335,25 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
       createTask: (input) => createMutation.mutateAsync(input),
       updateTask: async (taskId, input) => { await updateTaskMutation.mutateAsync({ taskId, input }); },
       deleteTask: async (taskId) => { await deleteTaskMutation.mutateAsync(taskId); },
-      addTaskMessage: async (taskId, body) => { await workspacePort.addTaskMessage(taskId, body); await refresh(); },
-      addChecklistItem: async (taskId, text) => { await workspacePort.addChecklistItem(taskId, text); await refresh(); },
-      setChecklistItemCompleted: async (itemId, completed) => { await workspacePort.setChecklistItemCompleted(itemId, completed); await refresh(); },
-      deleteChecklistItem: async (itemId) => { await workspacePort.deleteChecklistItem(itemId); await refresh(); },
+      addTaskMessage: async (taskId, body) => { await workspacePort.addTaskMessage(taskId, body); void refresh(); },
+      addChecklistItem: async (taskId, text) => { await workspacePort.addChecklistItem(taskId, text); void refresh(); },
+      setChecklistItemCompleted: async (itemId, completed) => {
+        const previous = client.getQueryData<WorkspaceSnapshot>(workspaceQueryKey);
+        patchWorkspace((current) => ({
+          ...current,
+          tasks: current.tasks.map((task) => task.checklist.some((item) => item.id === itemId)
+            ? { ...task, checklist: task.checklist.map((item) => item.id === itemId ? { ...item, completed } : item) }
+            : task),
+        }));
+        try {
+          await workspacePort.setChecklistItemCompleted(itemId, completed);
+          void refresh();
+        } catch (cause) {
+          client.setQueryData(workspaceQueryKey, previous);
+          throw cause;
+        }
+      },
+      deleteChecklistItem: async (itemId) => { await workspacePort.deleteChecklistItem(itemId); void refresh(); },
       uploadTaskAttachment: async (taskId, file) => { await workspacePort.uploadTaskAttachment(taskId, file); await refresh(); },
       replaceTaskAttachment: async (attachmentId, file) => { await workspacePort.replaceTaskAttachment(attachmentId, file); await refresh(); },
       downloadTaskAttachment: async (attachmentId) => {
