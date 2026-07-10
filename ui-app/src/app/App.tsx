@@ -5,6 +5,7 @@ import { useWorkspace } from "./providers/app-providers";
 
 const DashboardPage = lazy(() => import("../features/dashboard/pages/dashboard-page").then((module) => ({ default: module.DashboardPage })));
 const AiPage = lazy(() => import("../features/ai/pages/ai-page").then((module) => ({ default: module.AiPage })));
+const ChannelsPage = lazy(() => import("../features/chat/pages/channels-page").then((module) => ({ default: module.ChannelsPage })));
 const FaqPage = lazy(() => import("../features/help/pages/faq-page").then((module) => ({ default: module.FaqPage })));
 const InboxPage = lazy(() => import("../features/inbox/pages/inbox-page").then((module) => ({ default: module.InboxPage })));
 const MyWorkPage = lazy(() => import("../features/my-work/pages/my-work-page").then((module) => ({ default: module.MyWorkPage })));
@@ -62,6 +63,7 @@ export function App() {
           <Route path="/ai" element={<AiPage />} />
           <Route path="/my-work" element={<MyWorkPage />} />
           <Route path="/inbox" element={<InboxPage />} />
+          <Route path="/channels" element={<ChannelsPage />} />
           <Route path="/projects" element={<ProjectsPage />} />
           <Route path="/projects/:projectId" element={<NavigateProjectToList />} />
           <Route path="/projects/:projectId/:view" element={<ProjectPage />} />

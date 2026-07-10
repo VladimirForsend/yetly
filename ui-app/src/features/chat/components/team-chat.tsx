@@ -1,4 +1,4 @@
-import { Hash, MessageCircle, Plus, Send, UserRound, Users, X } from "lucide-react";
+import { Hash, MessageCircle, Plus, Send, UserRound, Users } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatConversation } from "../../../application/ports/workspace-port";
 import { useWorkspace } from "../../../app/providers/app-providers";
@@ -17,7 +17,6 @@ function conversationIcon(conversation: ChatConversation) {
 
 export function TeamChat() {
   const { snapshot, createChatChannel, startDirectChat, sendChatMessage } = useWorkspace();
-  const [open, setOpen] = useState(false);
   const [activeId, setActiveId] = useState<string>();
   const [body, setBody] = useState("");
   const [channelName, setChannelName] = useState("");
@@ -47,8 +46,8 @@ export function TeamChat() {
   }, [activeId, conversations]);
 
   useEffect(() => {
-    if (open) messagesEnd.current?.scrollIntoView({ behavior: "smooth" });
-  }, [open, activeConversation?.id, messages.length]);
+    messagesEnd.current?.scrollIntoView({ behavior: "smooth" });
+  }, [activeConversation?.id, messages.length]);
 
   useEffect(() => {
     if (!snapshot || getStorageMode() !== "supabase") {
@@ -111,10 +110,8 @@ export function TeamChat() {
   }
 
   return (
-    <div className="fixed bottom-5 right-5 z-[65] sm:bottom-7 sm:right-7">
-      {open && (
-        <section className="mb-3 flex h-[min(680px,78vh)] w-[min(860px,calc(100vw-2.5rem))] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-float" aria-label="Chat en vivo del equipo">
-          <aside className="hidden w-64 flex-col border-r border-slate-200 bg-ink-950 text-white sm:flex">
+        <section className="flex min-h-[calc(100vh-15rem)] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-card" aria-label="Canales y mensajes del equipo">
+          <aside className="hidden w-72 flex-col border-r border-slate-200 bg-ink-950 text-white md:flex">
             <header className="border-b border-white/10 px-4 py-3">
               <p className="truncate text-sm font-black">{snapshot.activeOrganization.name}</p>
               <p className="mt-1 flex items-center gap-1.5 text-xs text-white/70"><span className="h-2 w-2 rounded-full bg-emerald-400" /> {online} conectado{online === 1 ? "" : "s"}</p>
@@ -160,16 +157,30 @@ export function TeamChat() {
                 <p className="truncate text-sm font-black text-ink-950">{activeConversation ? conversationLabel(activeConversation) : "Chat"}</p>
                 <p className="truncate text-xs font-bold text-ink-500">{activeConversation?.type === "direct" ? "Mensaje directo" : "Canal de texto"}</p>
               </div>
-              <button onClick={() => setOpen(false)} className="grid h-10 w-10 place-items-center rounded-xl hover:bg-slate-100" aria-label="Cerrar chat"><X className="h-5 w-5" /></button>
             </header>
 
-            <div className="flex gap-2 overflow-x-auto border-b border-slate-200 bg-slate-50 p-2 sm:hidden">
+            <div className="space-y-3 border-b border-slate-200 bg-slate-50 p-3 md:hidden">
+              <div className="flex gap-2 overflow-x-auto">
               {conversations.map((conversation) => (
                 <button key={conversation.id} onClick={() => setActiveId(conversation.id)} className={`flex shrink-0 items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-black ${activeConversation?.id === conversation.id ? "bg-ink-950 text-white" : "bg-white text-ink-600"}`}>
                   {conversationIcon(conversation)}
                   <span>{conversationLabel(conversation)}</span>
                 </button>
               ))}
+              </div>
+              <div className="grid gap-2 sm:grid-cols-2">
+                <form onSubmit={(event) => { event.preventDefault(); void createChannel(); }} className="flex gap-2">
+                  <input value={channelName} onChange={(event) => setChannelName(event.target.value)} placeholder="nuevo-canal" className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-ink-950 outline-none focus:border-brand-500" />
+                  <button className="grid h-9 w-9 place-items-center rounded-xl bg-ink-950 text-white" aria-label="Crear canal"><Plus className="h-4 w-4" /></button>
+                </form>
+                <form onSubmit={(event) => { event.preventDefault(); void openDirect(); }} className="flex gap-2">
+                  <select value={directUserId} onChange={(event) => setDirectUserId(event.target.value)} className="min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-ink-950 outline-none focus:border-brand-500">
+                    <option value="">Elegir persona</option>
+                    {people.map((person) => <option key={person.id} value={person.id}>{person.name}</option>)}
+                  </select>
+                  <button className="grid h-9 w-9 place-items-center rounded-xl bg-brand-600 text-white" aria-label="Abrir mensaje directo"><MessageCircle className="h-4 w-4" /></button>
+                </form>
+              </div>
             </div>
 
             <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
@@ -189,8 +200,5 @@ export function TeamChat() {
             </div>
           </div>
         </section>
-      )}
-      <button onClick={() => setOpen((value) => !value)} className="ml-auto flex h-14 items-center gap-2 rounded-2xl bg-ink-950 px-4 font-black text-white shadow-float transition hover:-translate-y-0.5 hover:bg-brand-700 focus-visible:outline-none focus-visible:ring-4 focus-visible:ring-brand-200" aria-expanded={open} aria-label="Abrir chat del equipo"><MessageCircle className="h-5 w-5" /><span className="hidden sm:inline">Chat</span><span className="h-2 w-2 rounded-full bg-emerald-400" /></button>
-    </div>
   );
 }

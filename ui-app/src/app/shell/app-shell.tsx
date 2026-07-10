@@ -11,6 +11,7 @@ import {
   Home,
   Inbox,
   Menu,
+  MessageCircle,
   PanelLeftClose,
   Search,
   Settings,
@@ -25,13 +26,13 @@ import { useWorkspace } from "../providers/app-providers";
 import { QuickAddDialog } from "../../features/tasks/components/quick-add-dialog";
 import { Avatar } from "../../shared/ui/avatar";
 import { cn } from "../../shared/lib/cn";
-import { TeamChat } from "../../features/chat/components/team-chat";
 
 const navigation = [
   { to: "/home", label: "Inicio", Icon: Home },
   { to: "/ai", label: "Yetly AI", Icon: Bot },
   { to: "/my-work", label: "Mi trabajo", Icon: Zap },
   { to: "/inbox", label: "Bandeja", Icon: Inbox },
+  { to: "/channels", label: "Canales", Icon: MessageCircle },
   { to: "/projects", label: "Proyectos", Icon: FolderKanban },
   { to: "/teams", label: "Equipos", Icon: Users },
   { to: "/timesheets", label: "Timesheets", Icon: Clock3 },
@@ -45,6 +46,7 @@ const routeLabels: Record<string, string> = {
   "/ai": "Yetly AI",
   "/my-work": "Mi trabajo",
   "/inbox": "Bandeja",
+  "/channels": "Canales",
   "/projects": "Proyectos",
   "/teams": "Equipos",
   "/timesheets": "Timesheets",
@@ -359,7 +361,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
-      <TeamChat />
     </div>
   );
 }
