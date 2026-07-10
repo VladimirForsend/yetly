@@ -212,9 +212,20 @@ export function ExecutiveAiAssistant() {
         role: "user",
         content: prompt.trim(),
       });
-      const history = [...messages, userMessage].slice(-12).map((message) => ({ role: message.role, content: message.content }));
+      const history = messages.slice(-10).map((message) => ({ role: message.role, content: message.content }));
       setMessages((current) => [...current, userMessage]);
       setBody("");
+      const selectedProject = snapshot.projects.find((item) => item.id === scope.projectId)!;
+      const selectedTask = scope.taskId ? snapshot.tasks.find((item) => item.id === scope.taskId) : undefined;
+      const scopeLabel = selectedTask
+        ? `la tarea "${selectedTask.title}" (ID ${selectedTask.id}) del proyecto "${selectedProject.name}" (ID ${selectedProject.id})`
+        : `el proyecto completo "${selectedProject.name}" (ID ${selectedProject.id})`;
+      const groundedPrompt = `ALCANCE ACTUAL: ${scopeLabel}.
+Yetly adjuntó en YETLY_DATA una fotografía real con ${context.metadata.includedTasks} tarea(s), métricas deterministas, responsables, fechas, carga, tiempos y conexiones disponibles.
+No solicites al usuario que vuelva a indicar el proyecto, la tarea ni los datos: ya están incluidos. Si algún campo específico no existe, indícalo como información faltante.
+
+SOLICITUD ACTUAL:
+${prompt.trim()}`;
       const result = await streamOllamaChat({
         config,
         model,
@@ -222,9 +233,18 @@ export function ExecutiveAiAssistant() {
         onContent: setStreamingText,
         tools: supportsTools ? [ollamaProposalTool] : undefined,
         messages: [
-          { role: "system", content: `${EXECUTIVE_SYSTEM_PROMPT}\n\nPara conexiones nuevas puedes usar el clientRef de una tarea propuesta. Usa siempre IDs exactos incluidos en los datos.` },
-          { role: "system", content: `YETLY_DATA\n${context.serialized}\nEND_YETLY_DATA` },
+          {
+            role: "system",
+            content: `${EXECUTIVE_SYSTEM_PROMPT}
+
+El contexto real requerido para responder está incluido a continuación. Analízalo directamente y nunca pidas que el usuario vuelva a seleccionar o describir el alcance. Para conexiones nuevas puedes usar el clientRef de una tarea propuesta. Usa siempre IDs exactos incluidos en los datos.
+
+YETLY_DATA_BEGIN
+${context.serialized}
+YETLY_DATA_END`,
+          },
           ...history,
+          { role: "user", content: groundedPrompt },
         ],
       });
       const proposalCall = result.toolCalls.find((call) => call.name === "propose_yetly_changes");
