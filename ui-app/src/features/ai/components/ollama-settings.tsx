@@ -1,7 +1,7 @@
 import { Bot, CheckCircle2, ExternalLink, KeyRound, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { clearOllamaConfig, getOllamaConfig, saveOllamaConfig } from "../../../infrastructure/ollama/ollama-config";
-import { listOllamaModels } from "../../../infrastructure/ollama/ollama-client";
+import { listOllamaModels, validateOllamaApiKey } from "../../../infrastructure/ollama/ollama-client";
 import { Button } from "../../../shared/ui/button";
 import type { OllamaModel } from "../types";
 
@@ -32,6 +32,7 @@ export function OllamaSettings() {
       const items = await listOllamaModels(provisional);
       if (!items.length) throw new Error("La cuenta no devolvió modelos disponibles.");
       const model = items.some((item) => item.model === selectedModel) ? selectedModel : items[0].model;
+      await validateOllamaApiKey(provisional, model);
       saveOllamaConfig({ ...provisional, defaultModel: model });
       setModels(items);
       setSelectedModel(model);

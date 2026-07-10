@@ -29,7 +29,7 @@ export class OllamaApiError extends Error {
 }
 
 function friendlyError(status: number, fallback: string) {
-  if (status === 401 || status === 403) return "La API key de Ollama es inválida o fue revocada.";
+  if (status === 401 || status === 403) return "Ollama rechazó la API key al intentar usar un modelo. Crea una clave nueva en Ollama Cloud y vuelve a probarla.";
   if (status === 404) return "El modelo ya no está disponible en Ollama Cloud.";
   if (status === 429) return "Ollama alcanzó el límite de uso. Espera un momento y vuelve a intentar.";
   if (status >= 500) return "Ollama Cloud está temporalmente indisponible. Vuelve a intentar en unos minutos.";
@@ -108,6 +108,21 @@ export async function showOllamaModel(config: OllamaConfig, model: string): Prom
   const response = await request(config, "/api/show", { method: "POST", body: JSON.stringify({ model }) });
   const payload = await response.json() as { capabilities?: string[] };
   return Array.isArray(payload.capabilities) ? payload.capabilities : [];
+}
+
+export async function validateOllamaApiKey(config: OllamaConfig, model: string): Promise<void> {
+  const response = await request(config, "/api/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      model,
+      messages: [{ role: "user", content: "Responde solo ok." }],
+      stream: false,
+      think: false,
+      options: { temperature: 0, num_predict: 2 },
+    }),
+  });
+  const payload = await response.json().catch(() => ({})) as { error?: string };
+  if (payload.error) throw new OllamaApiError(payload.error);
 }
 
 export async function streamOllamaChat(input: {
