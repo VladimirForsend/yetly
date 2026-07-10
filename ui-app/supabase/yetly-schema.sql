@@ -1,4 +1,4 @@
--- Yetly Cloud schema v1.6
+-- Yetly Cloud schema v1.7
 -- Ejecutar completo en Supabase Dashboard > SQL Editor.
 -- No requiere service_role en Yetly. La app usa únicamente Project URL + publishable key.
 
@@ -10,7 +10,7 @@ create table if not exists public.yetly_schema_meta (
   installed_at timestamptz not null default now()
 );
 insert into public.yetly_schema_meta (id, version)
-values (1, 16)
+values (1, 17)
 on conflict (id) do update set version = excluded.version;
 
 create table if not exists public.profiles (
@@ -477,6 +477,49 @@ begin
   where id = target_org;
 
   return next_code;
+end;
+$$;
+
+create or replace function public.yetly_start_direct_chat(
+  target_org uuid,
+  target_user uuid
+)
+returns uuid
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  direct_name text;
+  direct_id uuid;
+begin
+  if auth.uid() is null then
+    raise exception 'Debes iniciar sesión.';
+  end if;
+  if target_user = auth.uid() then
+    raise exception 'No puedes abrir un chat directo contigo mismo.';
+  end if;
+  if not public.yetly_is_org_member(target_org) then
+    raise exception 'No perteneces a esta organización.';
+  end if;
+  if not public.yetly_user_in_org(target_org, target_user) then
+    raise exception 'La persona no pertenece a esta organización.';
+  end if;
+
+  direct_name := least(auth.uid()::text, target_user::text) || ':' || greatest(auth.uid()::text, target_user::text);
+
+  insert into public.chat_conversations (organization_id, type, name, created_by)
+  values (target_org, 'direct', direct_name, auth.uid())
+  on conflict (organization_id, type, name) do update set name = excluded.name
+  returning id into direct_id;
+
+  insert into public.chat_participants (conversation_id, organization_id, user_id)
+  values
+    (direct_id, target_org, auth.uid()),
+    (direct_id, target_org, target_user)
+  on conflict (conversation_id, user_id) do nothing;
+
+  return direct_id;
 end;
 $$;
 
@@ -1030,6 +1073,7 @@ grant execute on function public.yetly_upsert_my_profile(text, text) to authenti
 grant execute on function public.yetly_create_organization(text, text, text) to authenticated;
 grant execute on function public.yetly_join_organization(text, text, text) to authenticated;
 grant execute on function public.yetly_rotate_invite_code(uuid) to authenticated;
+grant execute on function public.yetly_start_direct_chat(uuid, uuid) to authenticated;
 
 insert into storage.buckets (id, name, public, file_size_limit)
 values ('yetly-task-files', 'yetly-task-files', false, 52428800)

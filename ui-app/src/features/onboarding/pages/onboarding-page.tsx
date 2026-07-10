@@ -301,7 +301,7 @@ export function OnboardingPage() {
               <div className="mt-5 grid gap-3 sm:grid-cols-2">
                 <div className="rounded-2xl border border-brand-200 bg-brand-50 p-4">
                   <p className="text-sm font-black text-brand-900">Si eres dueño del espacio</p>
-                  <p className="mt-1 text-sm leading-6 text-brand-800">Sigue estos pasos una sola vez, instala el SQL v1.6 y después invita al equipo mediante el enlace que genera Yetly.</p>
+                  <p className="mt-1 text-sm leading-6 text-brand-800">Sigue estos pasos una sola vez, instala el SQL v1.7 y después invita al equipo mediante el enlace que genera Yetly.</p>
                 </div>
                 <div className="rounded-2xl border border-success-600/20 bg-success-50 p-4">
                   <p className="text-sm font-black text-success-800">Si recibiste una invitación</p>
@@ -377,10 +377,10 @@ export function OnboardingPage() {
           {step === 2 && (
             <div className="grid gap-8 lg:grid-cols-[.9fr_1.1fr]">
               <div>
-                <p className="text-sm font-black uppercase tracking-wider text-brand-700">2. Instala Yetly v1.6 en tu base</p>
+                <p className="text-sm font-black uppercase tracking-wider text-brand-700">2. Instala Yetly v1.7 en tu base</p>
                 <h1 className="mt-2 text-3xl font-black tracking-[-0.045em] text-ink-950">Copiar, pegar, ejecutar.</h1>
                 <p className="mt-3 text-sm leading-6 text-ink-600">
-                  El instalador actual corresponde al esquema interno 16. Crea o actualiza las tablas de Yetly, permisos RLS, invitaciones, chat, checklist, IA y Realtime.
+                  El instalador actual corresponde al esquema interno 17. Crea o actualiza las tablas de Yetly, permisos RLS, invitaciones, mensajes directos, chat, checklist, IA y Realtime.
                 </p>
                 <div className="mt-4 rounded-2xl border border-warning-200 bg-warning-50 p-4 text-sm leading-6 text-warning-900">
                   <p className="font-black">Solo el dueño realiza esta instalación</p>
@@ -390,7 +390,7 @@ export function OnboardingPage() {
                   {[
                     ["Abre SQL Editor", "Usa el botón directo de abajo."],
                     ["Pulsa “New query”", "Se abrirá un editor grande."],
-                    ["Pega todo el SQL v1.6", "Copia el bloque completo; no ejecutes fragmentos sueltos."],
+                    ["Pega todo el SQL v1.7", "Copia el bloque completo; no ejecutes fragmentos sueltos."],
                     ["Pulsa Run", "Espera el mensaje de éxito."],
                     ["Vuelve aquí", "Pulsa Verificar instalación."],
                   ].map(([title, text], index) => (
@@ -415,7 +415,7 @@ export function OnboardingPage() {
               <div>
                 <div className="flex items-center justify-between gap-3">
                   <label className="text-sm font-black text-ink-900" htmlFor="yetly-schema-sql">Instalador completo</label>
-                  <span className="rounded-full bg-success-50 px-3 py-1 text-xs font-black text-success-700">Actual · v1.6 / esquema 16</span>
+                  <span className="rounded-full bg-success-50 px-3 py-1 text-xs font-black text-success-700">Actual · v1.7 / esquema 17</span>
                 </div>
                 <textarea
                   id="yetly-schema-sql"

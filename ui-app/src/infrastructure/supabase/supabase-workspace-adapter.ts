@@ -947,30 +947,18 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     );
     if (existing) return existing.id;
 
-    const directName = [user.id, userId].sort().join(":");
-    const { data: conversation, error } = await this.client.from("chat_conversations").insert({
-      organization_id: snapshot.activeOrganization.id,
-      type: "direct",
-      name: directName,
-      created_by: user.id,
-    }).select("id").single();
+    const { data: conversationId, error } = await this.client.rpc("yetly_start_direct_chat", {
+      target_org: snapshot.activeOrganization.id,
+      target_user: userId,
+    });
     if (error) {
-      const { data: existing, error: existingError } = await this.client.from("chat_conversations")
-        .select("id")
-        .eq("organization_id", snapshot.activeOrganization.id)
-        .eq("type", "direct")
-        .eq("name", directName)
-        .maybeSingle();
-      if (existingError || !existing) throw asError(error, "No pudimos crear el mensaje directo.");
-      return existing.id as string;
+      const detail = `${error.code ?? ""} ${error.message ?? ""}`.toLowerCase();
+      if (detail.includes("pgrst202") || detail.includes("yetly_start_direct_chat")) {
+        throw new Error("Tu Supabase necesita el esquema Yetly v17. Copia y ejecuta nuevamente el instalador SQL completo desde Conectar Supabase.");
+      }
+      throw asError(error, "No pudimos crear el mensaje directo.");
     }
-    const conversationId = conversation.id as string;
-    const { error: participantError } = await this.client.from("chat_participants").insert([
-      { conversation_id: conversationId, organization_id: snapshot.activeOrganization.id, user_id: user.id },
-      { conversation_id: conversationId, organization_id: snapshot.activeOrganization.id, user_id: userId },
-    ]);
-    if (participantError) throw asError(participantError, "No pudimos agregar participantes al mensaje directo.");
-    return conversationId;
+    return conversationId as string;
   }
 
   async sendChatMessage(conversationId: string, body: string): Promise<void> {

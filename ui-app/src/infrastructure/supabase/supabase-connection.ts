@@ -14,7 +14,7 @@ export interface SupabaseProbeResult {
   message: string;
 }
 
-export const REQUIRED_YETLY_SCHEMA_VERSION = 16;
+export const REQUIRED_YETLY_SCHEMA_VERSION = 17;
 
 const CONNECTION_KEY = "yetly:v1:connection";
 const LEGACY_LOCAL_MODE = { mode: "local" as const };
