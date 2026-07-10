@@ -131,6 +131,7 @@ function personFromProfile(profile: Row | undefined, fallbackId: string, fallbac
 export class SupabaseWorkspaceAdapter implements WorkspacePort {
   private readonly client: SupabaseClient;
   private readonly config: SupabaseConnectionConfig;
+  private activeOrgCache?: { user: User; memberships: Row[]; activeId: string; expiresAt: number };
 
   constructor(config: SupabaseConnectionConfig) {
     this.config = config;
@@ -138,6 +139,8 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   private async requireUser(): Promise<User> {
+    const { data: sessionData } = await this.client.auth.getSession();
+    if (sessionData.session?.user) return sessionData.session.user;
     const { data, error } = await this.client.auth.getUser();
     if (error || !data.user) throw new Error("Inicia sesión en Supabase para continuar.");
     return data.user;
@@ -170,6 +173,10 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   private async resolveActiveOrg(organizationId?: string) {
+    if (this.activeOrgCache && this.activeOrgCache.expiresAt > Date.now()
+      && (!organizationId || organizationId === this.activeOrgCache.activeId)) {
+      return this.activeOrgCache;
+    }
     const { data: authData, error: authError } = await this.client.auth.getUser();
     if (authError || !authData.user) return { user: null as User | null, memberships: [] as Row[], activeId: "" };
     const user = authData.user;
@@ -196,7 +203,9 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         : memberships[0].organization_id;
 
     window.localStorage.setItem(this.activeOrgKey(user.id), activeId);
-    return { user, memberships: memberships as Row[], activeId };
+    const resolved = { user, memberships: memberships as Row[], activeId, expiresAt: Date.now() + 15_000 };
+    this.activeOrgCache = resolved;
+    return resolved;
   }
 
   async getSnapshot(organizationId?: string): Promise<WorkspaceSnapshot | null> {
@@ -746,7 +755,9 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     return next!.tasks.find((task) => task.id === data.id)!;
   }
 
-  async updateTask(taskId: string, input: UpdateTaskInput): Promise<TaskSummary> {
+  async updateTask(taskId: string, input: UpdateTaskInput): Promise<void> {
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const payload: Row = { updated_at: new Date().toISOString() };
     if (input.title !== undefined) {
       assertText(input.title, "El título de la tarea");
@@ -765,17 +776,11 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     if (input.mode !== undefined) payload.mode = input.mode;
     const { error } = await this.client.from("tasks").update(payload).eq("id", taskId);
     if (error) throw asError(error, "No pudimos actualizar la tarea.");
-    const user = await this.requireUser();
-    const current = await this.getSnapshot();
-    if (current) await this.taskEvent(current.activeOrganization.id, taskId, user.id, "Actualizó la tarea", "Cambió sus campos o modo");
-    const next = await this.getSnapshot();
-    const task = next?.tasks.find((item) => item.id === taskId);
-    if (!task) throw new Error("No pudimos recuperar la tarea actualizada.");
-    return task;
+    await this.taskEvent(activeId, taskId, user.id, "Actualizó la tarea", "Cambió sus campos o modo");
   }
 
-  async moveTask(taskId: string, status: TaskStatus): Promise<TaskSummary> {
-    return this.updateTask(taskId, { status });
+  async moveTask(taskId: string, status: TaskStatus): Promise<void> {
+    await this.updateTask(taskId, { status });
   }
 
   async deleteTask(taskId: string): Promise<void> {
@@ -785,33 +790,30 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
 
   async addTaskMessage(taskId: string, body: string): Promise<void> {
     assertText(body, "El mensaje", 1);
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    const task = snapshot?.tasks.find((item) => item.id === taskId);
-    if (!snapshot || !task) throw new Error("No se encontró la tarea.");
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const { error } = await this.client.from("task_messages").insert({
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       task_id: taskId,
       author_id: user.id,
       body: body.trim(),
     });
     if (error) throw asError(error, "No pudimos enviar el mensaje de tarea.");
-    await this.taskEvent(snapshot.activeOrganization.id, taskId, user.id, "Añadió un mensaje", body.trim().slice(0, 120));
+    await this.taskEvent(activeId, taskId, user.id, "Añadió un mensaje", body.trim().slice(0, 120));
   }
 
   async addChecklistItem(taskId: string, text: string): Promise<void> {
     assertText(text, "El elemento", 1);
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    if (!snapshot?.tasks.some((item) => item.id === taskId)) throw new Error("No se encontró la tarea.");
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const { error } = await this.client.from("task_checklist_items").insert({
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       task_id: taskId,
       text: text.trim(),
       created_by: user.id,
     });
     if (error) throw asError(error, "No pudimos añadir el elemento.");
-    await this.taskEvent(snapshot.activeOrganization.id, taskId, user.id, "Añadió un elemento", text.trim());
+    await this.taskEvent(activeId, taskId, user.id, "Añadió un elemento", text.trim());
   }
 
   async setChecklistItemCompleted(itemId: string, completed: boolean): Promise<void> {
@@ -835,11 +837,10 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   async uploadTaskAttachment(taskId: string, file: File): Promise<void> {
     if (!file.size) throw new Error("El archivo está vacío.");
     if (file.size > 50 * 1024 * 1024) throw new Error("El archivo supera el máximo de 50 MB.");
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    if (!snapshot?.tasks.some((item) => item.id === taskId)) throw new Error("No se encontró la tarea.");
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const attachmentId = crypto.randomUUID();
-    const storagePath = `${snapshot.activeOrganization.id}/${taskId}/${attachmentId}/file`;
+    const storagePath = `${activeId}/${taskId}/${attachmentId}/file`;
     const { error: uploadError } = await this.client.storage.from("yetly-task-files").upload(storagePath, file, {
       contentType: file.type || "application/octet-stream",
       upsert: false,
@@ -847,7 +848,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     if (uploadError) throw asError(uploadError, "No pudimos subir el adjunto.");
     const { error } = await this.client.from("task_attachments").insert({
       id: attachmentId,
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       task_id: taskId,
       storage_path: storagePath,
       file_name: file.name,
@@ -860,7 +861,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       throw asError(error, "El archivo subió, pero no pudimos registrarlo.");
     }
     await cacheTaskFile(attachmentCacheKey(attachmentId, 1), file);
-    await this.taskEvent(snapshot.activeOrganization.id, taskId, user.id, "Añadió un adjunto", file.name);
+    await this.taskEvent(activeId, taskId, user.id, "Añadió un adjunto", file.name);
   }
 
   async replaceTaskAttachment(attachmentId: string, file: File): Promise<void> {
@@ -912,43 +913,40 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   async sendTeamMessage(body: string): Promise<void> {
-    const snapshot = await this.getSnapshot();
-    const general = snapshot?.chatConversations.find((conversation) => conversation.type === "general");
+    const { activeId } = await this.resolveActiveOrg();
+    if (!activeId) throw new Error("No hay organización activa.");
+    const { data: general, error } = await this.client.from("chat_conversations")
+      .select("id")
+      .eq("organization_id", activeId)
+      .eq("type", "general")
+      .eq("name", "general")
+      .maybeSingle();
+    if (error) throw asError(error, "No pudimos abrir el chat general.");
     if (!general) throw new Error("No encontramos el chat general.");
     await this.sendChatMessage(general.id, body);
   }
 
-  async createChatChannel(nameInput: string): Promise<void> {
+  async createChatChannel(nameInput: string): Promise<string> {
     assertText(nameInput, "El nombre del canal");
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    if (!snapshot) throw new Error("No hay organización activa.");
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const name = nameInput.trim().replace(/^#/, "");
-    const { error } = await this.client.from("chat_conversations").insert({
-      organization_id: snapshot.activeOrganization.id,
+    const { data, error } = await this.client.from("chat_conversations").insert({
+      organization_id: activeId,
       type: "channel",
       name,
       created_by: user.id,
-    });
+    }).select("id").single();
     if (error) throw asError(error, "No pudimos crear el canal.");
+    return data.id as string;
   }
 
   async startDirectChat(userId: string): Promise<string> {
-    const user = await this.requireUser();
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     if (userId === user.id) throw new Error("No puedes abrir un chat directo contigo mismo.");
-    const snapshot = await this.getSnapshot();
-    if (!snapshot) throw new Error("No hay organización activa.");
-    const target = snapshot.workload.find((item) => item.person.id === userId)?.person;
-    if (!target) throw new Error("No encontramos esa persona en tu organización.");
-    const existing = snapshot.chatConversations.find((conversation) =>
-      conversation.type === "direct" &&
-      conversation.participants.some((participant) => participant.id === user.id) &&
-      conversation.participants.some((participant) => participant.id === userId),
-    );
-    if (existing) return existing.id;
-
     const { data: conversationId, error } = await this.client.rpc("yetly_start_direct_chat", {
-      target_org: snapshot.activeOrganization.id,
+      target_org: activeId,
       target_user: userId,
     });
     if (error) {
@@ -963,15 +961,11 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
 
   async sendChatMessage(conversationId: string, body: string): Promise<void> {
     assertText(body, "El mensaje", 1);
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    if (!snapshot) throw new Error("No hay organización activa.");
-    if (!snapshot.chatConversations.some((conversation) => conversation.id === conversationId)) {
-      throw new Error("No encontramos esa conversación.");
-    }
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const { error } = await this.client.from("chat_messages").insert({
       conversation_id: conversationId,
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       author_id: user.id,
       body: body.trim(),
     });
@@ -979,12 +973,10 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   async saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void> {
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    const task = snapshot?.tasks.find((item) => item.id === taskId && item.projectId === projectId);
-    if (!snapshot || !task) throw new Error("No se encontró la tarea del flujo.");
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const { error } = await this.client.from("workflow_node_positions").upsert({
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       project_id: projectId,
       task_id: taskId,
       x: Math.round(x),
@@ -997,14 +989,10 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
 
   async createWorkflowConnection(projectId: string, sourceTaskId: string, targetTaskId: string): Promise<void> {
     if (sourceTaskId === targetTaskId) throw new Error("Una tarea no puede conectarse consigo misma.");
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    const projectTasks = new Set(snapshot?.tasks.filter((task) => task.projectId === projectId).map((task) => task.id));
-    if (!snapshot || !projectTasks.has(sourceTaskId) || !projectTasks.has(targetTaskId)) {
-      throw new Error("Las dos tareas deben pertenecer al proyecto.");
-    }
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const { error } = await this.client.from("workflow_connections").insert({
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       project_id: projectId,
       source_task_id: sourceTaskId,
       target_task_id: targetTaskId,
@@ -1020,14 +1008,11 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   async startTimer(taskId: string): Promise<void> {
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    if (!snapshot) throw new Error("No hay organización activa.");
-    const task = snapshot.tasks.find((item) => item.id === taskId);
-    if (!task) throw new Error("No se encontró la tarea.");
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const { error } = await this.client.from("active_timers").upsert({
       user_id: user.id,
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       task_id: taskId,
       started_at: new Date().toISOString(),
     }, { onConflict: "user_id" });
@@ -1080,11 +1065,10 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
 
   async createTimeEntry(input: CreateTimeEntryInput): Promise<TimeEntrySummary> {
     if (input.durationMinutes <= 0) throw new Error("La duración debe ser mayor a cero.");
-    const user = await this.requireUser();
-    const snapshot = await this.getSnapshot();
-    if (!snapshot) throw new Error("No hay organización activa.");
+    const { user, activeId } = await this.resolveActiveOrg();
+    if (!user || !activeId) throw new Error("No hay organización activa.");
     const { data, error } = await this.client.from("time_entries").insert({
-      organization_id: snapshot.activeOrganization.id,
+      organization_id: activeId,
       project_id: input.projectId,
       task_id: input.taskId || null,
       user_id: user.id,
@@ -1193,16 +1177,22 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
 
   subscribe(onChange: () => void): () => void {
     const tables = ["projects", "tasks", "task_checklist_items", "task_messages", "task_attachments", "task_events", "team_messages", "chat_conversations", "chat_participants", "chat_messages", "workflow_node_positions", "workflow_connections", "time_entries", "teams", "team_members", "organization_members", "profiles"];
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const scheduleRefresh = () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(onChange, 350);
+    };
     let channel: RealtimeChannel = this.client.channel(`yetly-workspace-${crypto.randomUUID()}`);
     for (const table of tables) {
       channel = channel.on(
         "postgres_changes",
         { event: "*", schema: "public", table },
-        () => onChange(),
+        scheduleRefresh,
       );
     }
     channel.subscribe();
     return () => {
+      if (refreshTimer) clearTimeout(refreshTimer);
       void this.client.removeChannel(channel);
     };
   }

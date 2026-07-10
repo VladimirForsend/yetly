@@ -293,8 +293,8 @@ export interface WorkspacePort {
   addTeamMember(teamId: string, userId: string): Promise<void>;
   removeTeamMember(teamId: string, userId: string): Promise<void>;
   createTask(input: CreateTaskInput): Promise<TaskSummary>;
-  updateTask(taskId: string, input: UpdateTaskInput): Promise<TaskSummary>;
-  moveTask(taskId: string, status: TaskStatus): Promise<TaskSummary>;
+  updateTask(taskId: string, input: UpdateTaskInput): Promise<void>;
+  moveTask(taskId: string, status: TaskStatus): Promise<void>;
   deleteTask(taskId: string): Promise<void>;
   addTaskMessage(taskId: string, body: string): Promise<void>;
   addChecklistItem(taskId: string, text: string): Promise<void>;
@@ -305,7 +305,7 @@ export interface WorkspacePort {
   downloadTaskAttachment(attachmentId: string): Promise<{ blob: Blob; fileName: string }>;
   deleteTaskAttachment(attachmentId: string): Promise<void>;
   sendTeamMessage(body: string): Promise<void>;
-  createChatChannel(name: string): Promise<void>;
+  createChatChannel(name: string): Promise<string>;
   startDirectChat(userId: string): Promise<string>;
   sendChatMessage(conversationId: string, body: string): Promise<void>;
   saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void>;

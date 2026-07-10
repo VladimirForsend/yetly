@@ -713,7 +713,7 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     return deriveSnapshot(state).tasks.find((item) => item.id === task.id)!;
   }
 
-  async updateTask(taskId: string, input: UpdateTaskInput): Promise<TaskSummary> {
+  async updateTask(taskId: string, input: UpdateTaskInput): Promise<void> {
     const state = requireState();
     const task = state.tasks.find((item) => item.id === taskId && item.organizationId === state.activeOrganizationId);
     if (!task) throw new Error("No se encontró la tarea.");
@@ -736,11 +736,10 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     task.history.unshift({ id: id("evt"), action: "Actualizó la tarea", detail: "Cambió sus campos o modo", actor: clone(state.currentUser), createdAt: nowIso() });
     activity(state, "actualizó la tarea", task.title);
     save(state);
-    return deriveSnapshot(state).tasks.find((item) => item.id === task.id)!;
   }
 
-  async moveTask(taskId: string, status: TaskStatus): Promise<TaskSummary> {
-    return this.updateTask(taskId, { status });
+  async moveTask(taskId: string, status: TaskStatus): Promise<void> {
+    await this.updateTask(taskId, { status });
   }
 
   async deleteTask(taskId: string): Promise<void> {
@@ -848,15 +847,16 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     await this.sendChatMessage(generalChatId(state.activeOrganizationId), body);
   }
 
-  async createChatChannel(nameInput: string): Promise<void> {
+  async createChatChannel(nameInput: string): Promise<string> {
     assertText(nameInput, "El nombre del canal");
     const state = requireState();
     const name = nameInput.trim().replace(/^#/, "");
     if (state.chatConversations.some((conversation) => conversation.type !== "direct" && conversation.name.toLowerCase() === name.toLowerCase())) {
       throw new Error("Ya existe un canal con ese nombre.");
     }
+    const conversationId = id("chn");
     state.chatConversations.push({
-      id: id("chn"),
+      id: conversationId,
       type: "channel",
       name,
       participants: [clone(state.currentUser)],
@@ -864,6 +864,7 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
       createdAt: nowIso(),
     });
     save(state);
+    return conversationId;
   }
 
   async startDirectChat(userId: string): Promise<string> {

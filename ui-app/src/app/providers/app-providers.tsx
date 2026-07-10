@@ -126,12 +126,42 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
   const refresh = async () => {
     await client.invalidateQueries({ queryKey: ["workspace"] });
   };
+  const refreshInBackground = () => { void refresh(); };
 
   // Update the visible workspace immediately and let Supabase reconcile in the background.
   // This keeps small interactions (like checking an item) responsive on high-latency networks.
   const workspaceQueryKey = ["workspace", activeOrganizationId ?? "default", connectionRevision] as const;
   const patchWorkspace = (patch: (current: WorkspaceSnapshot) => WorkspaceSnapshot) => {
     client.setQueryData<WorkspaceSnapshot>(workspaceQueryKey, (current) => current ? patch(current) : current);
+  };
+  const optimisticallyUpdateTask = (taskId: string, input: UpdateTaskInput) => {
+    patchWorkspace((current) => {
+      const tasks = current.tasks.map((task) => {
+        if (task.id !== taskId) return task;
+        const nextStatus = input.status ?? task.status;
+        return {
+          ...task,
+          title: input.title !== undefined ? input.title.trim() : task.title,
+          description: input.description !== undefined ? input.description.trim() : task.description,
+          status: nextStatus,
+          completed: input.status !== undefined ? nextStatus === "done" : task.completed,
+          priority: input.priority ?? task.priority,
+          dueDate: input.dueDate !== undefined ? input.dueDate || undefined : task.dueDate,
+          startDate: input.startDate !== undefined ? input.startDate || undefined : task.startDate,
+          estimateMinutes: input.estimateMinutes !== undefined ? Math.max(0, input.estimateMinutes) : task.estimateMinutes,
+          assignees: input.assigneeId !== undefined
+            ? current.workload.filter((item) => item.person.id === input.assigneeId).map((item) => item.person)
+            : task.assignees,
+          mode: input.mode ?? task.mode,
+        };
+      });
+      const projects = current.projects.map((project) => {
+        const projectTasks = tasks.filter((task) => task.projectId === project.id);
+        const completed = projectTasks.filter((task) => task.completed).length;
+        return { ...project, progress: projectTasks.length ? Math.round((completed / projectTasks.length) * 100) : 0 };
+      });
+      return { ...current, tasks, projects };
+    });
   };
 
   const refreshCloudUser = async () => {
@@ -173,82 +203,94 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
 
   const workspaceMutation = useMutation({
     mutationFn: (input: CreateWorkspaceInput) => workspacePort.createWorkspace(input),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const organizationMutation = useMutation({
     mutationFn: (name: string) => workspacePort.createOrganization(name),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const joinOrganizationMutation = useMutation({
     mutationFn: (input: JoinOrganizationInput) => workspacePort.joinOrganization(input),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const projectMutation = useMutation({
     mutationFn: (input: CreateProjectInput) => workspacePort.createProject(input),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const teamMutation = useMutation({
     mutationFn: (input: CreateTeamInput) => workspacePort.createTeam(input),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const deleteTeamMutation = useMutation({
     mutationFn: (teamId: string) => workspacePort.deleteTeam(teamId),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const addTeamMemberMutation = useMutation({
     mutationFn: ({ teamId, userId }: { teamId: string; userId: string }) => workspacePort.addTeamMember(teamId, userId),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const removeTeamMemberMutation = useMutation({
     mutationFn: ({ teamId, userId }: { teamId: string; userId: string }) => workspacePort.removeTeamMember(teamId, userId),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const updateProjectMutation = useMutation({
     mutationFn: ({ projectId, input }: { projectId: string; input: UpdateProjectInput }) =>
       workspacePort.updateProject(projectId, input),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const deleteProjectMutation = useMutation({
     mutationFn: (projectId: string) => workspacePort.deleteProject(projectId),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const createMutation = useMutation({
     mutationFn: (input: CreateTaskInput) => workspacePort.createTask(input),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const updateTaskMutation = useMutation({
     mutationFn: ({ taskId, input }: { taskId: string; input: UpdateTaskInput }) =>
       workspacePort.updateTask(taskId, input),
-    onSuccess: refresh,
+    onMutate: ({ taskId, input }) => {
+      const previous = client.getQueryData<WorkspaceSnapshot>(workspaceQueryKey);
+      optimisticallyUpdateTask(taskId, input);
+      return { previous };
+    },
+    onError: (_error, _variables, context) => client.setQueryData(workspaceQueryKey, context?.previous),
+    onSuccess: refreshInBackground,
   });
   const deleteTaskMutation = useMutation({
     mutationFn: (taskId: string) => workspacePort.deleteTask(taskId),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const moveMutation = useMutation({
     mutationFn: ({ taskId, status }: { taskId: string; status: TaskStatus }) =>
       workspacePort.moveTask(taskId, status),
-    onSuccess: refresh,
+    onMutate: ({ taskId, status }) => {
+      const previous = client.getQueryData<WorkspaceSnapshot>(workspaceQueryKey);
+      optimisticallyUpdateTask(taskId, { status });
+      return { previous };
+    },
+    onError: (_error, _variables, context) => client.setQueryData(workspaceQueryKey, context?.previous),
+    onSuccess: refreshInBackground,
   });
   const timerStartMutation = useMutation({
     mutationFn: (taskId: string) => workspacePort.startTimer(taskId),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const timerStopMutation = useMutation({
     mutationFn: () => workspacePort.stopTimer(),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const timeEntryMutation = useMutation({
     mutationFn: (input: CreateTimeEntryInput) => workspacePort.createTimeEntry(input),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const markReadMutation = useMutation({
     mutationFn: () => workspacePort.markAllNotificationsRead(),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const importMutation = useMutation({
     mutationFn: (serialized: string) => workspacePort.importSnapshot(serialized),
-    onSuccess: refresh,
+    onSuccess: refreshInBackground,
   });
   const resetMutation = useMutation({
     mutationFn: () => workspacePort.resetWorkspace(),
@@ -354,25 +396,77 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
         }
       },
       deleteChecklistItem: async (itemId) => { await workspacePort.deleteChecklistItem(itemId); void refresh(); },
-      uploadTaskAttachment: async (taskId, file) => { await workspacePort.uploadTaskAttachment(taskId, file); await refresh(); },
-      replaceTaskAttachment: async (attachmentId, file) => { await workspacePort.replaceTaskAttachment(attachmentId, file); await refresh(); },
+      uploadTaskAttachment: async (taskId, file) => { await workspacePort.uploadTaskAttachment(taskId, file); void refresh(); },
+      replaceTaskAttachment: async (attachmentId, file) => { await workspacePort.replaceTaskAttachment(attachmentId, file); void refresh(); },
       downloadTaskAttachment: async (attachmentId) => {
         const result = await workspacePort.downloadTaskAttachment(attachmentId);
-        await refresh();
+        void refresh();
         return result;
       },
-      deleteTaskAttachment: async (attachmentId) => { await workspacePort.deleteTaskAttachment(attachmentId); await refresh(); },
-      sendTeamMessage: async (body) => { await workspacePort.sendTeamMessage(body); await refresh(); },
-      createChatChannel: async (name) => { await workspacePort.createChatChannel(name); await refresh(); },
+      deleteTaskAttachment: async (attachmentId) => { await workspacePort.deleteTaskAttachment(attachmentId); void refresh(); },
+      sendTeamMessage: async (body) => { await workspacePort.sendTeamMessage(body); void refresh(); },
+      createChatChannel: async (name) => {
+        const conversationId = await workspacePort.createChatChannel(name);
+        patchWorkspace((current) => current.chatConversations.some((conversation) => conversation.id === conversationId) ? current : ({
+          ...current,
+          chatConversations: [...current.chatConversations, {
+            id: conversationId,
+            type: "channel",
+            name: name.trim().replace(/^#/, ""),
+            participants: [current.currentUser],
+            createdBy: current.currentUser.id,
+            createdAt: new Date().toISOString(),
+          }],
+        }));
+        void refresh();
+      },
       startDirectChat: async (userId) => {
         const conversationId = await workspacePort.startDirectChat(userId);
-        await refresh();
+        patchWorkspace((current) => {
+          if (current.chatConversations.some((conversation) => conversation.id === conversationId)) return current;
+          const target = current.workload.find((item) => item.person.id === userId)?.person;
+          if (!target) return current;
+          return {
+            ...current,
+            chatConversations: [...current.chatConversations, {
+              id: conversationId,
+              type: "direct",
+              name: target.name,
+              participants: [current.currentUser, target],
+              createdBy: current.currentUser.id,
+              createdAt: new Date().toISOString(),
+            }],
+          };
+        });
+        void refresh();
         return conversationId;
       },
-      sendChatMessage: async (conversationId, body) => { await workspacePort.sendChatMessage(conversationId, body); await refresh(); },
-      saveWorkflowNodePosition: async (projectId, taskId, x, y) => { await workspacePort.saveWorkflowNodePosition(projectId, taskId, x, y); await refresh(); },
-      createWorkflowConnection: async (projectId, sourceTaskId, targetTaskId) => { await workspacePort.createWorkflowConnection(projectId, sourceTaskId, targetTaskId); await refresh(); },
-      deleteWorkflowConnection: async (connectionId) => { await workspacePort.deleteWorkflowConnection(connectionId); await refresh(); },
+      sendChatMessage: async (conversationId, body) => {
+        const temporaryId = `pending-${crypto.randomUUID()}`;
+        patchWorkspace((current) => ({
+          ...current,
+          chatMessages: [...current.chatMessages, {
+            id: temporaryId,
+            conversationId,
+            body: body.trim(),
+            author: current.currentUser,
+            createdAt: new Date().toISOString(),
+          }],
+        }));
+        try {
+          await workspacePort.sendChatMessage(conversationId, body);
+          void refresh();
+        } catch (cause) {
+          patchWorkspace((current) => ({
+            ...current,
+            chatMessages: current.chatMessages.filter((message) => message.id !== temporaryId),
+          }));
+          throw cause;
+        }
+      },
+      saveWorkflowNodePosition: async (projectId, taskId, x, y) => { await workspacePort.saveWorkflowNodePosition(projectId, taskId, x, y); void refresh(); },
+      createWorkflowConnection: async (projectId, sourceTaskId, targetTaskId) => { await workspacePort.createWorkflowConnection(projectId, sourceTaskId, targetTaskId); void refresh(); },
+      deleteWorkflowConnection: async (connectionId) => { await workspacePort.deleteWorkflowConnection(connectionId); void refresh(); },
       moveTask: async (taskId, status) => { await moveMutation.mutateAsync({ taskId, status }); },
       startTimer: async (taskId) => { await timerStartMutation.mutateAsync(taskId); },
       stopTimer: async () => { await timerStopMutation.mutateAsync(); },

@@ -74,12 +74,14 @@ export function TeamChat() {
 
   async function send() {
     if (!activeConversation || !body.trim()) return;
+    const pendingBody = body;
+    setBody("");
     setSending(true);
     setError("");
     try {
-      await sendChatMessage(activeConversation.id, body);
-      setBody("");
+      await sendChatMessage(activeConversation.id, pendingBody);
     } catch (cause) {
+      setBody((current) => current || pendingBody);
       setError(cause instanceof Error ? cause.message : "No pudimos enviar el mensaje.");
     } finally {
       setSending(false);
