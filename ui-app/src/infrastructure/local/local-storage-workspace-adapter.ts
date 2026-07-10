@@ -19,6 +19,8 @@ import type {
   TimeEntrySummary,
   UpdateProjectInput,
   UpdateTaskInput,
+  WorkflowConnection,
+  WorkflowNodePosition,
   WorkspacePort,
   WorkspaceSnapshot,
 } from "../../application/ports/workspace-port";
@@ -82,6 +84,8 @@ interface PersistedWorkspace {
   teamMessages: TeamMessage[];
   chatConversations: ChatConversation[];
   chatMessages: ChatMessage[];
+  workflowNodePositions: WorkflowNodePosition[];
+  workflowConnections: WorkflowConnection[];
   activeTimer?: PersistedTimer;
 }
 
@@ -246,6 +250,8 @@ function safeParse(raw: string): PersistedWorkspace {
   if (!Array.isArray(parsed.teamMessages)) parsed.teamMessages = [];
   if (!Array.isArray(parsed.chatConversations)) parsed.chatConversations = [];
   if (!Array.isArray(parsed.chatMessages)) parsed.chatMessages = [];
+  if (!Array.isArray(parsed.workflowNodePositions)) parsed.workflowNodePositions = [];
+  if (!Array.isArray(parsed.workflowConnections)) parsed.workflowConnections = [];
   parsed.tasks = parsed.tasks!.map((task) => ({
     ...task,
     mode: task.mode ?? "standard",
@@ -424,6 +430,12 @@ function deriveSnapshot(state: PersistedWorkspace): WorkspaceSnapshot {
     teamMessages: clone(generalMessages),
     chatConversations: clone(chatConversations),
     chatMessages: clone(chatMessages),
+    workflowNodePositions: clone(state.workflowNodePositions.filter((position) =>
+      orgProjects.some((project) => project.id === position.projectId),
+    )),
+    workflowConnections: clone(state.workflowConnections.filter((connection) =>
+      orgProjects.some((project) => project.id === connection.projectId),
+    )),
     activeTimer: state.activeTimer && timerTask ? {
       taskId: timerTask.id,
       taskTitle: timerTask.title,
@@ -532,6 +544,8 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
         createdAt: nowIso(),
       }],
       chatMessages: [],
+      workflowNodePositions: [],
+      workflowConnections: [],
     };
     activity(state, "creó la organización", org.name);
     save(state);
@@ -618,6 +632,8 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     const taskIds = new Set(state.tasks.filter((task) => task.projectId === projectId).map((task) => task.id));
     state.projects = state.projects.filter((item) => item.id !== projectId);
     state.tasks = state.tasks.filter((task) => task.projectId !== projectId);
+    state.workflowNodePositions = state.workflowNodePositions.filter((position) => position.projectId !== projectId);
+    state.workflowConnections = state.workflowConnections.filter((connection) => connection.projectId !== projectId);
     state.timeEntries = state.timeEntries.filter((entry) => entry.projectId !== projectId && (!entry.taskId || !taskIds.has(entry.taskId)));
     if (state.activeTimer && taskIds.has(state.activeTimer.taskId)) state.activeTimer = undefined;
     activity(state, "eliminó el proyecto", project.name);
@@ -732,6 +748,10 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     const task = state.tasks.find((item) => item.id === taskId && item.organizationId === state.activeOrganizationId);
     if (!task) throw new Error("No se encontró la tarea.");
     state.tasks = state.tasks.filter((item) => item.id !== taskId);
+    state.workflowNodePositions = state.workflowNodePositions.filter((position) => position.taskId !== taskId);
+    state.workflowConnections = state.workflowConnections.filter((connection) =>
+      connection.sourceTaskId !== taskId && connection.targetTaskId !== taskId,
+    );
     state.timeEntries = state.timeEntries.filter((entry) => entry.taskId !== taskId);
     if (state.activeTimer?.taskId === taskId) state.activeTimer = undefined;
     activity(state, "eliminó la tarea", task.title);
@@ -888,6 +908,43 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
       .filter((message) => message.conversationId === generalChatId(state.activeOrganizationId))
       .map((message) => ({ id: message.id, body: message.body, author: clone(message.author), createdAt: message.createdAt }))
       .slice(-100);
+    save(state);
+  }
+
+  async saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void> {
+    const state = requireState();
+    const task = state.tasks.find((item) => item.id === taskId && item.projectId === projectId);
+    if (!task) throw new Error("No se encontró la tarea del flujo.");
+    const position = state.workflowNodePositions.find((item) => item.projectId === projectId && item.taskId === taskId);
+    const next = { projectId, taskId, x: Math.round(x), y: Math.round(y), updatedAt: nowIso() };
+    if (position) Object.assign(position, next);
+    else state.workflowNodePositions.push(next);
+    save(state);
+  }
+
+  async createWorkflowConnection(projectId: string, sourceTaskId: string, targetTaskId: string): Promise<void> {
+    if (sourceTaskId === targetTaskId) throw new Error("Una tarea no puede conectarse consigo misma.");
+    const state = requireState();
+    const taskIds = new Set(state.tasks.filter((task) => task.projectId === projectId).map((task) => task.id));
+    if (!taskIds.has(sourceTaskId) || !taskIds.has(targetTaskId)) throw new Error("Las dos tareas deben pertenecer al proyecto.");
+    if (state.workflowConnections.some((item) => item.projectId === projectId && item.sourceTaskId === sourceTaskId && item.targetTaskId === targetTaskId)) {
+      throw new Error("Esa conexión ya existe.");
+    }
+    state.workflowConnections.push({
+      id: id("flow"),
+      projectId,
+      sourceTaskId,
+      targetTaskId,
+      createdAt: nowIso(),
+    });
+    save(state);
+  }
+
+  async deleteWorkflowConnection(connectionId: string): Promise<void> {
+    const state = requireState();
+    const exists = state.workflowConnections.some((connection) => connection.id === connectionId);
+    if (!exists) throw new Error("No se encontró la conexión.");
+    state.workflowConnections = state.workflowConnections.filter((connection) => connection.id !== connectionId);
     save(state);
   }
 

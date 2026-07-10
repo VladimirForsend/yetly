@@ -1,4 +1,4 @@
--- Yetly Cloud schema v1.4
+-- Yetly Cloud schema v1.5
 -- Ejecutar completo en Supabase Dashboard > SQL Editor.
 -- No requiere service_role en Yetly. La app usa únicamente Project URL + publishable key.
 
@@ -10,7 +10,7 @@ create table if not exists public.yetly_schema_meta (
   installed_at timestamptz not null default now()
 );
 insert into public.yetly_schema_meta (id, version)
-values (1, 14)
+values (1, 15)
 on conflict (id) do update set version = excluded.version;
 
 create table if not exists public.profiles (
@@ -178,6 +178,29 @@ create table if not exists public.chat_messages (
   created_at timestamptz not null default now()
 );
 
+create table if not exists public.workflow_node_positions (
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  task_id uuid not null references public.tasks(id) on delete cascade,
+  x double precision not null default 0,
+  y double precision not null default 0,
+  updated_by uuid not null references auth.users(id) on delete restrict,
+  updated_at timestamptz not null default now(),
+  primary key (project_id, task_id)
+);
+
+create table if not exists public.workflow_connections (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  project_id uuid not null references public.projects(id) on delete cascade,
+  source_task_id uuid not null references public.tasks(id) on delete cascade,
+  target_task_id uuid not null references public.tasks(id) on delete cascade,
+  created_by uuid not null references auth.users(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  check (source_task_id <> target_task_id),
+  unique (project_id, source_task_id, target_task_id)
+);
+
 create table if not exists public.time_entries (
   id uuid primary key default gen_random_uuid(),
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -222,6 +245,8 @@ create index if not exists idx_team_messages_org on public.team_messages(organiz
 create index if not exists idx_chat_conversations_org on public.chat_conversations(organization_id, created_at);
 create index if not exists idx_chat_participants_user on public.chat_participants(user_id);
 create index if not exists idx_chat_messages_conversation on public.chat_messages(conversation_id, created_at);
+create index if not exists idx_workflow_positions_project on public.workflow_node_positions(project_id);
+create index if not exists idx_workflow_connections_project on public.workflow_connections(project_id, created_at);
 create index if not exists idx_time_entries_org on public.time_entries(organization_id);
 create index if not exists idx_time_entries_user on public.time_entries(user_id);
 create index if not exists idx_activities_org on public.activities(organization_id);
@@ -463,6 +488,8 @@ alter table public.team_messages enable row level security;
 alter table public.chat_conversations enable row level security;
 alter table public.chat_participants enable row level security;
 alter table public.chat_messages enable row level security;
+alter table public.workflow_node_positions enable row level security;
+alter table public.workflow_connections enable row level security;
 alter table public.time_entries enable row level security;
 alter table public.activities enable row level security;
 alter table public.active_timers enable row level security;
@@ -754,6 +781,60 @@ with check (
   )
 );
 
+drop policy if exists "members read workflow positions" on public.workflow_node_positions;
+create policy "members read workflow positions" on public.workflow_node_positions for select to authenticated
+using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create workflow positions" on public.workflow_node_positions;
+create policy "members create workflow positions" on public.workflow_node_positions for insert to authenticated
+with check (
+  public.yetly_is_org_member(organization_id)
+  and updated_by = auth.uid()
+  and exists (
+    select 1 from public.tasks t
+    where t.id = workflow_node_positions.task_id
+      and t.project_id = workflow_node_positions.project_id
+      and t.organization_id = workflow_node_positions.organization_id
+  )
+);
+drop policy if exists "members update workflow positions" on public.workflow_node_positions;
+create policy "members update workflow positions" on public.workflow_node_positions for update to authenticated
+using (public.yetly_is_org_member(organization_id))
+with check (
+  public.yetly_is_org_member(organization_id)
+  and updated_by = auth.uid()
+  and exists (
+    select 1 from public.tasks t
+    where t.id = workflow_node_positions.task_id
+      and t.project_id = workflow_node_positions.project_id
+      and t.organization_id = workflow_node_positions.organization_id
+  )
+);
+
+drop policy if exists "members read workflow connections" on public.workflow_connections;
+create policy "members read workflow connections" on public.workflow_connections for select to authenticated
+using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create workflow connections" on public.workflow_connections;
+create policy "members create workflow connections" on public.workflow_connections for insert to authenticated
+with check (
+  public.yetly_is_org_member(organization_id)
+  and created_by = auth.uid()
+  and exists (
+    select 1 from public.tasks source
+    where source.id = workflow_connections.source_task_id
+      and source.project_id = workflow_connections.project_id
+      and source.organization_id = workflow_connections.organization_id
+  )
+  and exists (
+    select 1 from public.tasks target
+    where target.id = workflow_connections.target_task_id
+      and target.project_id = workflow_connections.project_id
+      and target.organization_id = workflow_connections.organization_id
+  )
+);
+drop policy if exists "members delete workflow connections" on public.workflow_connections;
+create policy "members delete workflow connections" on public.workflow_connections for delete to authenticated
+using (public.yetly_is_org_member(organization_id));
+
 drop policy if exists "members read time entries" on public.time_entries;
 create policy "members read time entries"
 on public.time_entries for select
@@ -829,7 +910,8 @@ revoke all on public.yetly_schema_meta, public.profiles, public.organizations,
   public.organization_members, public.teams, public.team_members, public.projects,
   public.tasks, public.task_checklist_items, public.task_messages, public.task_attachments,
   public.task_events, public.team_messages, public.chat_conversations, public.chat_participants,
-  public.chat_messages, public.time_entries, public.activities, public.active_timers
+  public.chat_messages, public.workflow_node_positions, public.workflow_connections,
+  public.time_entries, public.activities, public.active_timers
 from anon, authenticated;
 
 grant select on public.yetly_schema_meta to anon, authenticated;
@@ -848,6 +930,8 @@ grant select, insert on public.team_messages to authenticated;
 grant select, insert on public.chat_conversations to authenticated;
 grant select, insert on public.chat_participants to authenticated;
 grant select, insert on public.chat_messages to authenticated;
+grant select, insert, update on public.workflow_node_positions to authenticated;
+grant select, insert, delete on public.workflow_connections to authenticated;
 grant select, insert, update, delete on public.time_entries to authenticated;
 grant select, insert on public.activities to authenticated;
 grant select, insert, update, delete on public.active_timers to authenticated;
@@ -967,6 +1051,16 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table public.chat_messages;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.workflow_node_positions;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.workflow_connections;
 exception when duplicate_object then null;
 end $$;
 

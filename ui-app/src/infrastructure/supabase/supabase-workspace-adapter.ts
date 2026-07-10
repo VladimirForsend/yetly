@@ -21,6 +21,8 @@ import type {
   TimeEntrySummary,
   UpdateProjectInput,
   UpdateTaskInput,
+  WorkflowConnection,
+  WorkflowNodePosition,
   WorkspacePort,
   WorkspaceSnapshot,
 } from "../../application/ports/workspace-port";
@@ -220,6 +222,8 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       chatConversationsResult,
       chatParticipantsResult,
       chatMessagesResult,
+      workflowPositionsResult,
+      workflowConnectionsResult,
     ] = await Promise.all([
       this.client.from("organizations").select("id,name,color,invite_code").in("id", orgIds),
       this.client.from("profiles").select("id,full_name,role_title").eq("id", user.id).maybeSingle(),
@@ -238,6 +242,8 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       this.client.from("chat_conversations").select("*").eq("organization_id", activeId).order("created_at"),
       this.client.from("chat_participants").select("*").eq("organization_id", activeId),
       this.client.from("chat_messages").select("*").eq("organization_id", activeId).order("created_at", { ascending: false }).limit(300),
+      this.client.from("workflow_node_positions").select("*").eq("organization_id", activeId),
+      this.client.from("workflow_connections").select("*").eq("organization_id", activeId).order("created_at"),
     ]);
 
     const firstError = [
@@ -245,6 +251,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       projectsResult.error, tasksResult.error, entriesResult.error, activitiesResult.error, timerResult.error,
       checklistResult.error, taskMessagesResult.error, attachmentsResult.error, taskEventsResult.error, teamMessagesResult.error,
       chatConversationsResult.error, chatParticipantsResult.error, chatMessagesResult.error,
+      workflowPositionsResult.error, workflowConnectionsResult.error,
     ].find(Boolean);
     if (firstError) throw asError(firstError, "No pudimos cargar el workspace cloud.");
 
@@ -309,6 +316,8 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     const teamMessageRows = teamMessagesResult.data as Row[] ?? [];
     const chatConversationRows = chatConversationsResult.data as Row[] ?? [];
     const chatMessageRows = chatMessagesResult.data as Row[] ?? [];
+    const workflowPositionRows = workflowPositionsResult.data as Row[] ?? [];
+    const workflowConnectionRows = workflowConnectionsResult.data as Row[] ?? [];
     const cachedAttachmentIds = new Set<string>();
     await Promise.all(attachmentRows.map(async (attachment) => {
       if (await hasCachedTaskFile(attachmentCacheKey(attachment.id, Number(attachment.version || 1)))) cachedAttachmentIds.add(attachment.id);
@@ -468,6 +477,20 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       author: profiles.get(message.author_id) ?? currentUser,
       createdAt: message.created_at,
     }));
+    const workflowNodePositions: WorkflowNodePosition[] = workflowPositionRows.map((position) => ({
+      projectId: position.project_id,
+      taskId: position.task_id,
+      x: Number(position.x),
+      y: Number(position.y),
+      updatedAt: position.updated_at,
+    }));
+    const workflowConnections: WorkflowConnection[] = workflowConnectionRows.map((connection) => ({
+      id: connection.id,
+      projectId: connection.project_id,
+      sourceTaskId: connection.source_task_id,
+      targetTaskId: connection.target_task_id,
+      createdAt: connection.created_at,
+    }));
 
     const timer = timerResult.data as Row | null;
     const timerTask = timer ? tasks.find((task) => task.id === timer.task_id) : undefined;
@@ -506,6 +529,8 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       })),
       chatConversations,
       chatMessages,
+      workflowNodePositions,
+      workflowConnections,
       activeTimer: timer && timerTask ? {
         taskId: timerTask.id,
         taskTitle: timerTask.title,
@@ -965,6 +990,47 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     if (error) throw asError(error, "No pudimos enviar el mensaje.");
   }
 
+  async saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void> {
+    const user = await this.requireUser();
+    const snapshot = await this.getSnapshot();
+    const task = snapshot?.tasks.find((item) => item.id === taskId && item.projectId === projectId);
+    if (!snapshot || !task) throw new Error("No se encontró la tarea del flujo.");
+    const { error } = await this.client.from("workflow_node_positions").upsert({
+      organization_id: snapshot.activeOrganization.id,
+      project_id: projectId,
+      task_id: taskId,
+      x: Math.round(x),
+      y: Math.round(y),
+      updated_by: user.id,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: "project_id,task_id" });
+    if (error) throw asError(error, "No pudimos guardar la posición de la tarea.");
+  }
+
+  async createWorkflowConnection(projectId: string, sourceTaskId: string, targetTaskId: string): Promise<void> {
+    if (sourceTaskId === targetTaskId) throw new Error("Una tarea no puede conectarse consigo misma.");
+    const user = await this.requireUser();
+    const snapshot = await this.getSnapshot();
+    const projectTasks = new Set(snapshot?.tasks.filter((task) => task.projectId === projectId).map((task) => task.id));
+    if (!snapshot || !projectTasks.has(sourceTaskId) || !projectTasks.has(targetTaskId)) {
+      throw new Error("Las dos tareas deben pertenecer al proyecto.");
+    }
+    const { error } = await this.client.from("workflow_connections").insert({
+      organization_id: snapshot.activeOrganization.id,
+      project_id: projectId,
+      source_task_id: sourceTaskId,
+      target_task_id: targetTaskId,
+      created_by: user.id,
+    });
+    if (error?.code === "23505") throw new Error("Esa conexión ya existe.");
+    if (error) throw asError(error, "No pudimos conectar las tareas.");
+  }
+
+  async deleteWorkflowConnection(connectionId: string): Promise<void> {
+    const { error } = await this.client.from("workflow_connections").delete().eq("id", connectionId);
+    if (error) throw asError(error, "No pudimos eliminar la conexión.");
+  }
+
   async startTimer(taskId: string): Promise<void> {
     const user = await this.requireUser();
     const snapshot = await this.getSnapshot();
@@ -1138,7 +1204,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   subscribe(onChange: () => void): () => void {
-    const tables = ["projects", "tasks", "task_checklist_items", "task_messages", "task_attachments", "task_events", "team_messages", "chat_conversations", "chat_participants", "chat_messages", "time_entries", "teams", "team_members", "organization_members", "profiles"];
+    const tables = ["projects", "tasks", "task_checklist_items", "task_messages", "task_attachments", "task_events", "team_messages", "chat_conversations", "chat_participants", "chat_messages", "workflow_node_positions", "workflow_connections", "time_entries", "teams", "team_members", "organization_members", "profiles"];
     let channel: RealtimeChannel = this.client.channel(`yetly-workspace-${crypto.randomUUID()}`);
     for (const table of tables) {
       channel = channel.on(

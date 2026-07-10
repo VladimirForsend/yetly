@@ -10,6 +10,7 @@ import {
   GanttChart,
   LayoutList,
   MoreHorizontal,
+  Network,
   Plus,
   Search,
   Users,
@@ -28,6 +29,7 @@ import { ErrorState, LoadingState } from "../../../shared/ui/state-panel";
 import { QuickAddDialog } from "../../tasks/components/quick-add-dialog";
 import { EditProjectDialog } from "../components/edit-project-dialog";
 import { TaskDrawer } from "../../tasks/components/task-drawer";
+import { WorkflowNodixView } from "../components/workflow-nodix-view";
 
 const viewOptions = [
   { id: "overview", label: "Resumen", Icon: CircleDot },
@@ -35,6 +37,7 @@ const viewOptions = [
   { id: "board", label: "Tablero", Icon: Columns3 },
   { id: "calendar", label: "Calendario", Icon: CalendarDays },
   { id: "timeline", label: "Timeline", Icon: GanttChart },
+  { id: "workflow", label: "Workflow Nodix", Icon: Network },
   { id: "workload", label: "Carga", Icon: Users },
 ];
 
@@ -398,7 +401,19 @@ function OverviewView({ tasks, progress, health, healthReason }: { tasks: TaskSu
 
 export function ProjectPage() {
   const { projectId, view = "list" } = useParams();
-  const { snapshot, isLoading, isError, error, refetch, moveTask, isMovingTask } = useWorkspace();
+  const {
+    snapshot,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    moveTask,
+    createTask,
+    saveWorkflowNodePosition,
+    createWorkflowConnection,
+    deleteWorkflowConnection,
+    isMovingTask,
+  } = useWorkspace();
   const [selectedTask, setSelectedTask] = useState<TaskSummary>();
   const [search, setSearch] = useState("");
   const [announcement, setAnnouncement] = useState("");
@@ -495,6 +510,19 @@ export function ProjectPage() {
       {currentView === "board" && <BoardView tasks={tasks} projectId={project.id} onOpenTask={setSelectedTask} onMove={handleMove} />}
       {currentView === "calendar" && <CalendarView tasks={tasks} onOpenTask={setSelectedTask} />}
       {currentView === "timeline" && <TimelineView tasks={tasks} />}
+      {currentView === "workflow" && (
+        <WorkflowNodixView
+          projectId={project.id}
+          tasks={tasks}
+          positions={snapshot.workflowNodePositions.filter((position) => position.projectId === project.id)}
+          connections={snapshot.workflowConnections.filter((connection) => connection.projectId === project.id)}
+          onOpenTask={setSelectedTask}
+          onCreateTask={createTask}
+          onSavePosition={saveWorkflowNodePosition}
+          onCreateConnection={createWorkflowConnection}
+          onDeleteConnection={deleteWorkflowConnection}
+        />
+      )}
       {currentView === "workload" && <ProjectWorkloadView tasks={tasks} />}
 
       {isMovingTask && <div className="fixed bottom-5 right-5 z-40 rounded-xl bg-ink-950 px-4 py-3 text-sm font-bold text-white shadow-float" role="status">Actualizando tarea…</div>}

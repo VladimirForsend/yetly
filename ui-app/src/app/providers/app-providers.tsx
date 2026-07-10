@@ -9,6 +9,7 @@ import type {
   ImportResult,
   JoinOrganizationInput,
   TaskStatus,
+  TaskSummary,
   UpdateProjectInput,
   UpdateTaskInput,
   WorkspaceSnapshot,
@@ -69,7 +70,7 @@ interface WorkspaceContextValue {
   removeTeamMember: (teamId: string, userId: string) => Promise<void>;
   updateProject: (projectId: string, input: UpdateProjectInput) => Promise<void>;
   deleteProject: (projectId: string) => Promise<void>;
-  createTask: (input: CreateTaskInput) => Promise<void>;
+  createTask: (input: CreateTaskInput) => Promise<TaskSummary>;
   updateTask: (taskId: string, input: UpdateTaskInput) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
   addTaskMessage: (taskId: string, body: string) => Promise<void>;
@@ -84,6 +85,9 @@ interface WorkspaceContextValue {
   createChatChannel: (name: string) => Promise<void>;
   startDirectChat: (userId: string) => Promise<string>;
   sendChatMessage: (conversationId: string, body: string) => Promise<void>;
+  saveWorkflowNodePosition: (projectId: string, taskId: string, x: number, y: number) => Promise<void>;
+  createWorkflowConnection: (projectId: string, sourceTaskId: string, targetTaskId: string) => Promise<void>;
+  deleteWorkflowConnection: (connectionId: string) => Promise<void>;
   moveTask: (taskId: string, status: TaskStatus) => Promise<void>;
   startTimer: (taskId: string) => Promise<void>;
   stopTimer: () => Promise<void>;
@@ -321,7 +325,7 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
       removeTeamMember: async (teamId, userId) => { await removeTeamMemberMutation.mutateAsync({ teamId, userId }); },
       updateProject: async (projectId, input) => { await updateProjectMutation.mutateAsync({ projectId, input }); },
       deleteProject: async (projectId) => { await deleteProjectMutation.mutateAsync(projectId); },
-      createTask: async (input) => { await createMutation.mutateAsync(input); },
+      createTask: (input) => createMutation.mutateAsync(input),
       updateTask: async (taskId, input) => { await updateTaskMutation.mutateAsync({ taskId, input }); },
       deleteTask: async (taskId) => { await deleteTaskMutation.mutateAsync(taskId); },
       addTaskMessage: async (taskId, body) => { await workspacePort.addTaskMessage(taskId, body); await refresh(); },
@@ -344,6 +348,9 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
         return conversationId;
       },
       sendChatMessage: async (conversationId, body) => { await workspacePort.sendChatMessage(conversationId, body); await refresh(); },
+      saveWorkflowNodePosition: async (projectId, taskId, x, y) => { await workspacePort.saveWorkflowNodePosition(projectId, taskId, x, y); await refresh(); },
+      createWorkflowConnection: async (projectId, sourceTaskId, targetTaskId) => { await workspacePort.createWorkflowConnection(projectId, sourceTaskId, targetTaskId); await refresh(); },
+      deleteWorkflowConnection: async (connectionId) => { await workspacePort.deleteWorkflowConnection(connectionId); await refresh(); },
       moveTask: async (taskId, status) => { await moveMutation.mutateAsync({ taskId, status }); },
       startTimer: async (taskId) => { await timerStartMutation.mutateAsync(taskId); },
       stopTimer: async () => { await timerStopMutation.mutateAsync(); },

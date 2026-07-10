@@ -123,6 +123,22 @@ export interface ChatMessage {
   createdAt: string;
 }
 
+export interface WorkflowNodePosition {
+  projectId: string;
+  taskId: string;
+  x: number;
+  y: number;
+  updatedAt: string;
+}
+
+export interface WorkflowConnection {
+  id: string;
+  projectId: string;
+  sourceTaskId: string;
+  targetTaskId: string;
+  createdAt: string;
+}
+
 export interface TeamSummary {
   id: string;
   name: string;
@@ -183,6 +199,8 @@ export interface WorkspaceSnapshot {
   teamMessages: TeamMessage[];
   chatConversations: ChatConversation[];
   chatMessages: ChatMessage[];
+  workflowNodePositions: WorkflowNodePosition[];
+  workflowConnections: WorkflowConnection[];
   activeTimer?: {
     taskId: string;
     taskTitle: string;
@@ -290,6 +308,9 @@ export interface WorkspacePort {
   createChatChannel(name: string): Promise<void>;
   startDirectChat(userId: string): Promise<string>;
   sendChatMessage(conversationId: string, body: string): Promise<void>;
+  saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void>;
+  createWorkflowConnection(projectId: string, sourceTaskId: string, targetTaskId: string): Promise<void>;
+  deleteWorkflowConnection(connectionId: string): Promise<void>;
   startTimer(taskId: string): Promise<void>;
   stopTimer(): Promise<TimeEntrySummary>;
   createTimeEntry(input: CreateTimeEntryInput): Promise<TimeEntrySummary>;
