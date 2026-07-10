@@ -21,6 +21,7 @@ import { useWorkspace } from "../../../app/providers/app-providers";
 import { getPublishedSupabaseConfig } from "../../../infrastructure/supabase/supabase-connection";
 import { Button } from "../../../shared/ui/button";
 import { PageHeader } from "../../../shared/ui/page-header";
+import { OllamaSettings } from "../../ai/components/ollama-settings";
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -123,7 +124,7 @@ export function SettingsPage() {
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 pb-20 lg:pb-0">
       <PageHeader
         eyebrow="Preferencias y datos"
         title="Configuración"
@@ -174,6 +175,8 @@ export function SettingsPage() {
           </div>
         </div>
       </section>
+
+      <OllamaSettings />
 
       {storageMode === "supabase" && snapshot?.activeOrganization.inviteCode && (
         <section className="rounded-2xl border border-brand-200 bg-white p-5 shadow-card sm:p-6" aria-labelledby="invite-heading">

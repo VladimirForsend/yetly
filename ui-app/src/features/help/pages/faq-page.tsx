@@ -1,4 +1,4 @@
-import { ChevronDown, CircleHelp, Cloud, Database, FolderKanban, ShieldCheck, Timer, Users } from "lucide-react";
+import { Bot, ChevronDown, CircleHelp, Cloud, Database, FolderKanban, ShieldCheck, Timer, Users } from "lucide-react";
 import { PageHeader } from "../../../shared/ui/page-header";
 
 const groups = [
@@ -45,6 +45,15 @@ const groups = [
       ["¿Cómo funciona el timer?", "Inicia el timer desde una tarea. Yetly permite un timer activo por usuario. Al detenerlo crea una entrada de tiempo y recalcula totales."],
       ["¿Puedo registrar horas manualmente?", "Sí. En Timesheets selecciona proyecto, tarea opcional, fecha y duración."],
       ["¿Cómo se calcula la carga?", "Se suman estimaciones de tareas abiertas asignadas a cada persona y se comparan con una capacidad semanal base de 40 horas."],
+    ],
+  },
+  {
+    title: "Yetly AI y Ollama",
+    Icon: Bot,
+    items: [
+      ["¿Dónde se guarda mi API key de Ollama?", "Solo en este navegador: durante la sesión por defecto o en este dispositivo si marcas Recordar. No se guarda en Supabase ni en los respaldos de Yetly."],
+      ["¿Qué información recibe la IA?", "Únicamente el proyecto o tarea que selecciones, junto con fechas, tiempos, checklist, mensajes recientes, carga y dependencias. Los archivos adjuntos no se envían; solo se incluyen sus metadatos."],
+      ["¿La IA puede modificar tareas sola?", "No. Si el modelo soporta herramientas puede preparar una propuesta. Yetly muestra cada diferencia y solo aplica los cambios que selecciones y confirmes."],
     ],
   },
   {

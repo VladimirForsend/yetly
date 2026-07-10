@@ -1,9 +1,7 @@
 import {
   AlertTriangle,
   ArrowRight,
-  Blocks,
   CalendarClock,
-  CheckCircle2,
   Clock3,
   FolderKanban,
   TrendingUp,
@@ -13,13 +11,13 @@ import { Link } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import { formatMinutes } from "../../../shared/lib/format";
 import { Avatar } from "../../../shared/ui/avatar";
-import { Button } from "../../../shared/ui/button";
 import { HealthBadge } from "../../../shared/ui/health-badge";
 import { PageHeader } from "../../../shared/ui/page-header";
 import { ProgressBar } from "../../../shared/ui/progress-bar";
 import { ErrorState, LoadingState } from "../../../shared/ui/state-panel";
 import { QuickAddDialog } from "../../tasks/components/quick-add-dialog";
 import { CreateProjectDialog } from "../../projects/components/create-project-dialog";
+import { ExecutiveAiAssistant } from "../../ai/components/executive-ai-assistant";
 
 function MetricCard({
   label,
@@ -75,7 +73,7 @@ export function DashboardPage() {
   const maxDay = Math.max(...snapshot.weeklyTime.map((point) => point.minutes), 1);
 
   return (
-    <div className="space-y-7">
+    <div className="space-y-7 pb-20 lg:pb-0">
       <PageHeader
         eyebrow="Panorama ejecutivo"
         title={`Buenos días, ${snapshot.currentUser.name.split(" ")[0]}`}
@@ -274,25 +272,7 @@ export function DashboardPage() {
         </section>
       </div>
 
-      <section className="rounded-2xl border border-brand-100 bg-gradient-to-r from-brand-50 via-white to-blue-50 p-5 sm:p-6" aria-labelledby="confidence-heading">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex items-start gap-3">
-            <span className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-white text-brand-700 shadow-sm">
-              <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-            </span>
-            <div>
-              <h2 id="confidence-heading" className="font-bold text-ink-950">La mayoría del trabajo avanza según plan</h2>
-              <p className="mt-1 max-w-2xl text-sm leading-6 text-ink-600">
-                Intervén primero en Migración CRM y en la capacidad de Producto digital. El resto del portfolio no muestra señales críticas.
-              </p>
-            </div>
-          </div>
-          <Button variant="secondary" className="shrink-0" onClick={() => document.getElementById("projects-health-heading")?.focus()}>
-            <Blocks className="h-4 w-4" aria-hidden="true" />
-            Revisar señales
-          </Button>
-        </div>
-      </section>
+      <ExecutiveAiAssistant />
     </div>
   );
 }
