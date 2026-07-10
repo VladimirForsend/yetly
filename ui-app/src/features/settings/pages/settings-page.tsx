@@ -152,6 +152,9 @@ export function SettingsPage() {
               </Button>
             ) : (
               <>
+                <Button variant="secondary" onClick={() => navigate("/connect-supabase")}>
+                  <RefreshCw className="h-4 w-4" aria-hidden="true" /> Revisar instalación
+                </Button>
                 {cloudUserEmail && (
                   <Button variant="secondary" onClick={() => void signOutCloud()}>
                     <LogOut className="h-4 w-4" aria-hidden="true" /> Cerrar sesión

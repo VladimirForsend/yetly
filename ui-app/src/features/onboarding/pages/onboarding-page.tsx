@@ -78,12 +78,26 @@ export function OnboardingPage() {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const inviteHandledRef = useRef(false);
+  const schemaCheckedRef = useRef(false);
 
   const config: SupabaseConnectionConfig = useMemo(() => ({
     url: url.trim(),
     publishableKey: publishableKey.trim(),
   }), [url, publishableKey]);
   const links = useMemo(() => dashboardLinks(url || supabaseConfig?.url || ""), [url, supabaseConfig?.url]);
+
+  useEffect(() => {
+    if (schemaCheckedRef.current || searchParams.get("invite") || !supabaseConfig) return;
+    schemaCheckedRef.current = true;
+    void probeSupabase(supabaseConfig).then((result) => {
+      setSchemaReady(result.schemaReady);
+      setProbeMessage(result.message);
+      if (!result.schemaReady) setStep(2);
+    }).catch((cause) => {
+      setError(cause instanceof Error ? cause.message : "No pudimos revisar la instalación Supabase.");
+      setStep(1);
+    });
+  }, [searchParams, supabaseConfig]);
 
   useEffect(() => {
     if (inviteHandledRef.current) return;
