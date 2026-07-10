@@ -2,16 +2,16 @@ const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, apikey, content-type, x-client-info",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Expose-Headers": "X-Yetly-Ollama-Proxy",
+  "Access-Control-Expose-Headers": "X-Yetly-Ollama-Proxy, X-Yetly-Error-Source",
   "X-Yetly-Ollama-Proxy": "1",
 };
 
 const allowedEndpoints = new Set(["tags", "show", "chat"]);
 
-function json(body: unknown, status = 200) {
+function json(body: unknown, status = 200, source = "proxy") {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...corsHeaders, "Content-Type": "application/json", "X-Yetly-Error-Source": source },
   });
 }
 
@@ -52,5 +52,6 @@ Deno.serve(async (request) => {
   const headers = new Headers(corsHeaders);
   headers.set("Content-Type", upstream.headers.get("Content-Type") ?? "application/json");
   headers.set("Cache-Control", "no-store");
+  headers.set("X-Yetly-Error-Source", "ollama");
   return new Response(upstream.body, { status: upstream.status, headers });
 });

@@ -36,12 +36,13 @@ function friendlyError(status: number, fallback: string) {
   return fallback || "Ollama rechazó la solicitud.";
 }
 
-async function request(config: OllamaConfig, path: string, init?: RequestInit) {
+async function request(config: OllamaConfig, path: string, init?: RequestInit, canRefreshSession = true): Promise<Response> {
   try {
     if (getStorageMode() !== "supabase") throw new OllamaApiError("Conecta Supabase para usar Ollama Cloud desde GitHub Pages. La función segura evita el bloqueo del navegador.");
     const supabaseConfig = getSupabaseConfig();
     if (!supabaseConfig) throw new OllamaApiError("Falta la conexión Supabase de Yetly.");
-    const { data } = await getSupabaseClient().auth.getSession();
+    const client = getSupabaseClient();
+    const { data } = await client.auth.getSession();
     if (!data.session?.access_token) throw new OllamaApiError("Inicia sesión en Yetly para usar el asistente.", 401);
     const endpoint = path.replace(/^\/api\//, "");
     const response = await fetch(`${supabaseConfig.url}/functions/v1/ollama-proxy`, {
@@ -59,11 +60,19 @@ async function request(config: OllamaConfig, path: string, init?: RequestInit) {
       }),
     });
     if (!response.ok) {
-      const payload = await response.json().catch(() => ({})) as { error?: string };
+      const payload = await response.json().catch(() => ({})) as { error?: string; message?: string };
+      const errorSource = response.headers.get("X-Yetly-Error-Source");
       if (response.status === 404 && !response.headers.get("X-Yetly-Ollama-Proxy")) {
         throw new OllamaApiError("Falta desplegar la función ollama-proxy en tu proyecto Supabase.", 404);
       }
-      throw new OllamaApiError(friendlyError(response.status, payload.error ?? ""), response.status);
+      if (response.status === 401 && errorSource !== "ollama") {
+        if (canRefreshSession) {
+          const { data: refreshed, error: refreshError } = await client.auth.refreshSession();
+          if (!refreshError && refreshed.session?.access_token) return request(config, path, init, false);
+        }
+        throw new OllamaApiError("Tu sesión de Yetly expiró. Cierra sesión, vuelve a entrar y repite la consulta.", 401);
+      }
+      throw new OllamaApiError(friendlyError(response.status, payload.error ?? payload.message ?? ""), response.status);
     }
     return response;
   } catch (error) {
