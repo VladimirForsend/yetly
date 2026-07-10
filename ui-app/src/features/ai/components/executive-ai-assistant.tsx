@@ -16,7 +16,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import { getOllamaConfig, onOllamaConfigChange, saveOllamaConfig } from "../../../infrastructure/ollama/ollama-config";
-import { listOllamaModels, streamOllamaChat } from "../../../infrastructure/ollama/ollama-client";
+import { choosePreferredOllamaModel, listOllamaModels, OllamaApiError, streamOllamaChat, type OllamaChatMessage } from "../../../infrastructure/ollama/ollama-client";
 import { Button } from "../../../shared/ui/button";
 import { buildExecutiveContext, EXECUTIVE_SYSTEM_PROMPT } from "../lib/executive-context";
 import { aiHistoryRepository } from "../services/ai-history-repository";
@@ -226,13 +226,7 @@ No solicites al usuario que vuelva a indicar el proyecto, la tarea ni los datos:
 
 SOLICITUD ACTUAL:
 ${prompt.trim()}`;
-      const result = await streamOllamaChat({
-        config,
-        model,
-        signal: controller.signal,
-        onContent: setStreamingText,
-        tools: supportsTools ? [ollamaProposalTool] : undefined,
-        messages: [
+      const messagesForOllama: OllamaChatMessage[] = [
           {
             role: "system",
             content: `${EXECUTIVE_SYSTEM_PROMPT}
@@ -245,8 +239,39 @@ YETLY_DATA_END`,
           },
           ...history,
           { role: "user", content: groundedPrompt },
-        ],
-      });
+        ];
+      let responseModel = model;
+      let result;
+      try {
+        result = await streamOllamaChat({
+          config,
+          model: responseModel,
+          signal: controller.signal,
+          onContent: setStreamingText,
+          tools: supportsTools ? [ollamaProposalTool] : undefined,
+          messages: messagesForOllama,
+        });
+      } catch (cause) {
+        const fallbackModel = choosePreferredOllamaModel(models);
+        if (cause instanceof OllamaApiError && (cause.status === 401 || cause.status === 403) && fallbackModel && fallbackModel !== responseModel) {
+          responseModel = fallbackModel;
+          const fallbackConfig = { ...config, defaultModel: fallbackModel };
+          saveOllamaConfig(fallbackConfig);
+          setConfig(fallbackConfig);
+          setModel(fallbackModel);
+          setStreamingText("");
+          result = await streamOllamaChat({
+            config: fallbackConfig,
+            model: responseModel,
+            signal: controller.signal,
+            onContent: setStreamingText,
+            tools: models.find((item) => item.model === fallbackModel)?.capabilities.includes("tools") ? [ollamaProposalTool] : undefined,
+            messages: messagesForOllama,
+          });
+        } else {
+          throw cause;
+        }
+      }
       const proposalCall = result.toolCalls.find((call) => call.name === "propose_yetly_changes");
       const proposal = proposalCall ? parseAiProposal(proposalCall.arguments) : undefined;
       const content = result.content.trim() || (proposal ? "Preparé una propuesta de cambios basada en el análisis. Revísala antes de confirmar." : "Ollama no devolvió contenido.");
@@ -256,7 +281,7 @@ YETLY_DATA_END`,
         userId: snapshot.currentUser.id,
         role: "assistant",
         content,
-        model,
+        model: responseModel,
         usage: result.usage,
         proposal,
       });

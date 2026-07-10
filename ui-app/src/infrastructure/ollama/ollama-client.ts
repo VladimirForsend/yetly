@@ -2,7 +2,7 @@ import type { AiUsage, OllamaConfig, OllamaModel } from "../../features/ai/types
 import { normalizeOllamaApiKey } from "./ollama-config";
 import { getSupabaseClient, getSupabaseConfig, getStorageMode } from "../supabase/supabase-connection";
 
-type OllamaChatMessage = { role: "system" | "user" | "assistant"; content: string };
+export type OllamaChatMessage = { role: "system" | "user" | "assistant"; content: string };
 type OllamaTool = Record<string, unknown>;
 
 interface ChatChunk {
@@ -30,11 +30,18 @@ export class OllamaApiError extends Error {
 }
 
 function friendlyError(status: number, fallback: string) {
-  if (status === 401 || status === 403) return "Ollama rechazó la API key al intentar usar un modelo. Crea una clave nueva en Ollama Cloud y vuelve a probarla.";
+  if (status === 401 || status === 403) return "Ollama rechazó la API key o el modelo seleccionado. Prueba con gpt-oss:20b o crea una clave nueva en Ollama Cloud.";
   if (status === 404) return "El modelo ya no está disponible en Ollama Cloud.";
   if (status === 429) return "Ollama alcanzó el límite de uso. Espera un momento y vuelve a intentar.";
   if (status >= 500) return "Ollama Cloud está temporalmente indisponible. Vuelve a intentar en unos minutos.";
   return fallback || "Ollama rechazó la solicitud.";
+}
+
+const preferredModels = ["gpt-oss:20b", "gpt-oss:120b", "qwen3.5:397b", "glm-5.2"];
+
+export function choosePreferredOllamaModel(models: OllamaModel[], requestedModel?: string) {
+  if (requestedModel && models.some((item) => item.model === requestedModel)) return requestedModel;
+  return preferredModels.find((model) => models.some((item) => item.model === model)) ?? models[0]?.model ?? "";
 }
 
 async function request(config: OllamaConfig, path: string, init?: RequestInit, canRefreshSession = true): Promise<Response> {

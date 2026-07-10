@@ -1,7 +1,7 @@
 import { Bot, CheckCircle2, ExternalLink, KeyRound, RefreshCw, ShieldCheck, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { clearOllamaConfig, getOllamaConfig, saveOllamaConfig } from "../../../infrastructure/ollama/ollama-config";
-import { listOllamaModels, validateOllamaApiKey } from "../../../infrastructure/ollama/ollama-client";
+import { choosePreferredOllamaModel, listOllamaModels, OllamaApiError, validateOllamaApiKey } from "../../../infrastructure/ollama/ollama-client";
 import { Button } from "../../../shared/ui/button";
 import type { OllamaModel } from "../types";
 
@@ -31,8 +31,18 @@ export function OllamaSettings() {
       const provisional = { apiKey: key, remember, defaultModel: selectedModel || current?.defaultModel };
       const items = await listOllamaModels(provisional);
       if (!items.length) throw new Error("La cuenta no devolvió modelos disponibles.");
-      const model = items.some((item) => item.model === selectedModel) ? selectedModel : items[0].model;
-      await validateOllamaApiKey(provisional, model);
+      let model = choosePreferredOllamaModel(items, selectedModel || current?.defaultModel);
+      try {
+        await validateOllamaApiKey(provisional, model);
+      } catch (cause) {
+        const fallbackModel = choosePreferredOllamaModel(items);
+        if (cause instanceof OllamaApiError && (cause.status === 401 || cause.status === 403) && fallbackModel && fallbackModel !== model) {
+          await validateOllamaApiKey(provisional, fallbackModel);
+          model = fallbackModel;
+        } else {
+          throw cause;
+        }
+      }
       saveOllamaConfig({ ...provisional, defaultModel: model });
       setModels(items);
       setSelectedModel(model);
