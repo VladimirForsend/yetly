@@ -12,6 +12,7 @@ import type {
   ProjectSummary,
   TaskStatus,
   TaskSummary,
+  TeamMessage,
   TeamSummary,
   TimeEntrySummary,
   UpdateProjectInput,
@@ -19,6 +20,7 @@ import type {
   WorkspacePort,
   WorkspaceSnapshot,
 } from "../../application/ports/workspace-port";
+import { cacheTaskFile, getCachedTaskFile, removeCachedTaskFile } from "./task-file-cache";
 
 const STORAGE_KEY = "yetly:v1:workspace";
 const SCHEMA_VERSION = 1;
@@ -75,6 +77,7 @@ interface PersistedWorkspace {
   timeEntries: Array<TimeEntrySummary & { organizationId: string }>;
   activities: PersistedActivity[];
   notifications: WorkspaceSnapshot["notifications"];
+  teamMessages: TeamMessage[];
   activeTimer?: PersistedTimer;
 }
 
@@ -207,6 +210,17 @@ function safeParse(raw: string): PersistedWorkspace {
   if (!Array.isArray(parsed.teams)) parsed.teams = [];
   if (!Array.isArray(parsed.activities)) parsed.activities = [];
   if (!Array.isArray(parsed.notifications)) parsed.notifications = [];
+  if (!Array.isArray(parsed.teamMessages)) parsed.teamMessages = [];
+  parsed.tasks = parsed.tasks!.map((task) => ({
+    ...task,
+    mode: task.mode ?? "standard",
+    createdBy: task.createdBy ?? parsed.currentUser!.id,
+    canEdit: true,
+    checklist: Array.isArray(task.checklist) ? task.checklist : [],
+    messages: Array.isArray(task.messages) ? task.messages : [],
+    attachments: Array.isArray(task.attachments) ? task.attachments : [],
+    history: Array.isArray(task.history) ? task.history : [],
+  }));
 
   const orgIds = new Set(parsed.organizations!.map((org) => org.id));
   if (!orgIds.has(parsed.activeOrganizationId!)) throw new Error("El respaldo referencia una organización activa inexistente.");
@@ -305,6 +319,13 @@ function deriveSnapshot(state: PersistedWorkspace): WorkspaceSnapshot {
     labels: task.labels,
     blockedReason: task.blockedReason,
     completed: task.completed,
+    mode: task.mode,
+    createdBy: task.createdBy,
+    canEdit: true,
+    checklist: clone(task.checklist),
+    messages: clone(task.messages),
+    attachments: clone(task.attachments),
+    history: clone(task.history),
   }));
 
   const assignedMinutes = tasks
@@ -356,6 +377,7 @@ function deriveSnapshot(state: PersistedWorkspace): WorkspaceSnapshot {
     notifications: clone(state.notifications),
     weeklyTime,
     timeEntries: orgEntries.map(({ organizationId: _organizationId, ...entry }) => clone(entry)),
+    teamMessages: clone(state.teamMessages),
     activeTimer: state.activeTimer && timerTask ? {
       taskId: timerTask.id,
       taskTitle: timerTask.title,
@@ -454,6 +476,7 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
       timeEntries: [],
       activities: [],
       notifications: [],
+      teamMessages: [],
     };
     activity(state, "creó la organización", org.name);
     save(state);
@@ -602,6 +625,13 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
       estimateMinutes: Math.max(0, Number(input.estimateMinutes ?? 0)),
       labels: [],
       completed: input.status === "done",
+      mode: input.mode ?? "standard",
+      createdBy: state.currentUser.id,
+      canEdit: true,
+      checklist: [],
+      messages: [],
+      attachments: [],
+      history: [{ id: id("evt"), action: "Creó la tarea", detail: input.title.trim(), actor: clone(state.currentUser), createdAt: nowIso() }],
       createdAt: nowIso(),
       updatedAt: nowIso(),
     };
@@ -628,8 +658,10 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     if (input.dueDate !== undefined) task.dueDate = input.dueDate || undefined;
     if (input.startDate !== undefined) task.startDate = input.startDate || undefined;
     if (input.estimateMinutes !== undefined) task.estimateMinutes = Math.max(0, Number(input.estimateMinutes));
+    if (input.mode !== undefined) task.mode = input.mode;
     if (task.startDate && task.dueDate && task.dueDate < task.startDate) throw new Error("La fecha límite no puede ser anterior al inicio.");
     task.updatedAt = nowIso();
+    task.history.unshift({ id: id("evt"), action: "Actualizó la tarea", detail: "Cambió sus campos o modo", actor: clone(state.currentUser), createdAt: nowIso() });
     activity(state, "actualizó la tarea", task.title);
     save(state);
     return deriveSnapshot(state).tasks.find((item) => item.id === task.id)!;
@@ -647,6 +679,99 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     state.timeEntries = state.timeEntries.filter((entry) => entry.taskId !== taskId);
     if (state.activeTimer?.taskId === taskId) state.activeTimer = undefined;
     activity(state, "eliminó la tarea", task.title);
+    save(state);
+  }
+
+  async addTaskMessage(taskId: string, body: string): Promise<void> {
+    assertText(body, "El mensaje", 1);
+    const state = requireState();
+    const task = state.tasks.find((item) => item.id === taskId);
+    if (!task) throw new Error("No se encontró la tarea.");
+    task.messages.push({ id: id("msg"), body: body.trim(), author: clone(state.currentUser), createdAt: nowIso() });
+    task.history.unshift({ id: id("evt"), action: "Añadió un mensaje", detail: body.trim().slice(0, 120), actor: clone(state.currentUser), createdAt: nowIso() });
+    save(state);
+  }
+
+  async addChecklistItem(taskId: string, text: string): Promise<void> {
+    assertText(text, "El elemento", 1);
+    const state = requireState();
+    const task = state.tasks.find((item) => item.id === taskId);
+    if (!task) throw new Error("No se encontró la tarea.");
+    task.checklist.push({ id: id("chk"), text: text.trim(), completed: false, createdBy: state.currentUser.id, createdAt: nowIso() });
+    task.history.unshift({ id: id("evt"), action: "Añadió un elemento", detail: text.trim(), actor: clone(state.currentUser), createdAt: nowIso() });
+    save(state);
+  }
+
+  async setChecklistItemCompleted(itemId: string, completed: boolean): Promise<void> {
+    const state = requireState();
+    const task = state.tasks.find((candidate) => candidate.checklist.some((item) => item.id === itemId));
+    const item = task?.checklist.find((candidate) => candidate.id === itemId);
+    if (!task || !item) throw new Error("No se encontró el elemento.");
+    item.completed = completed;
+    task.history.unshift({ id: id("evt"), action: completed ? "Completó un elemento" : "Reabrió un elemento", detail: item.text, actor: clone(state.currentUser), createdAt: nowIso() });
+    save(state);
+  }
+
+  async deleteChecklistItem(itemId: string): Promise<void> {
+    const state = requireState();
+    const task = state.tasks.find((candidate) => candidate.checklist.some((item) => item.id === itemId));
+    const item = task?.checklist.find((candidate) => candidate.id === itemId);
+    if (!task || !item) throw new Error("No se encontró el elemento.");
+    task.checklist = task.checklist.filter((candidate) => candidate.id !== itemId);
+    task.history.unshift({ id: id("evt"), action: "Eliminó un elemento", detail: item.text, actor: clone(state.currentUser), createdAt: nowIso() });
+    save(state);
+  }
+
+  async uploadTaskAttachment(taskId: string, file: File): Promise<void> {
+    if (!file.size || file.size > 50 * 1024 * 1024) throw new Error("El archivo debe pesar entre 1 byte y 50 MB.");
+    const state = requireState();
+    const task = state.tasks.find((item) => item.id === taskId);
+    if (!task) throw new Error("No se encontró la tarea.");
+    const attachmentId = id("att");
+    await cacheTaskFile(attachmentId, file);
+    task.attachments.push({ id: attachmentId, fileName: file.name, contentType: file.type || "application/octet-stream", sizeBytes: file.size, version: 1, uploadedBy: clone(state.currentUser), uploadedAt: nowIso(), cachedLocally: true });
+    task.history.unshift({ id: id("evt"), action: "Añadió un adjunto", detail: file.name, actor: clone(state.currentUser), createdAt: nowIso() });
+    save(state);
+  }
+
+  async replaceTaskAttachment(attachmentId: string, file: File): Promise<void> {
+    const state = requireState();
+    const task = state.tasks.find((candidate) => candidate.attachments.some((item) => item.id === attachmentId));
+    const attachment = task?.attachments.find((item) => item.id === attachmentId);
+    if (!task || !attachment || attachment.deletedAt) throw new Error("El adjunto ya no está disponible.");
+    const oldName = attachment.fileName;
+    await cacheTaskFile(attachmentId, file);
+    Object.assign(attachment, { fileName: file.name, contentType: file.type || "application/octet-stream", sizeBytes: file.size, version: attachment.version + 1, cachedLocally: true });
+    task.history.unshift({ id: id("evt"), action: "Actualizó un adjunto", detail: `${oldName} → ${file.name}`, actor: clone(state.currentUser), createdAt: nowIso() });
+    save(state);
+  }
+
+  async downloadTaskAttachment(attachmentId: string): Promise<{ blob: Blob; fileName: string }> {
+    const state = requireState();
+    const attachment = state.tasks.flatMap((task) => task.attachments).find((item) => item.id === attachmentId);
+    if (!attachment || attachment.deletedAt) throw new Error("El adjunto fue eliminado.");
+    const blob = await getCachedTaskFile(attachmentId);
+    if (!blob) throw new Error("Este archivo no está disponible en este navegador.");
+    return { blob, fileName: attachment.fileName };
+  }
+
+  async deleteTaskAttachment(attachmentId: string): Promise<void> {
+    const state = requireState();
+    const task = state.tasks.find((candidate) => candidate.attachments.some((item) => item.id === attachmentId));
+    const attachment = task?.attachments.find((item) => item.id === attachmentId);
+    if (!task || !attachment) throw new Error("No se encontró el adjunto.");
+    attachment.deletedAt = nowIso();
+    attachment.cachedLocally = false;
+    await removeCachedTaskFile(attachmentId);
+    task.history.unshift({ id: id("evt"), action: "Eliminó un adjunto", detail: attachment.fileName, actor: clone(state.currentUser), createdAt: nowIso() });
+    save(state);
+  }
+
+  async sendTeamMessage(body: string): Promise<void> {
+    assertText(body, "El mensaje", 1);
+    const state = requireState();
+    state.teamMessages.push({ id: id("chat"), body: body.trim(), author: clone(state.currentUser), createdAt: nowIso() });
+    state.teamMessages = state.teamMessages.slice(-100);
     save(state);
   }
 

@@ -408,6 +408,9 @@ export function ProjectPage() {
     () => (snapshot?.tasks ?? []).filter((task) => task.projectId === projectId && task.title.toLowerCase().includes(search.toLowerCase())),
     [snapshot?.tasks, projectId, search],
   );
+  const selectedTaskCurrent = selectedTask
+    ? snapshot?.tasks.find((task) => task.id === selectedTask.id) ?? selectedTask
+    : undefined;
 
   if (isLoading) return <LoadingState label="Cargando proyecto…" />;
   if (isError || !snapshot) return <ErrorState message={error?.message ?? "No fue posible cargar el proyecto."} onRetry={refetch} />;
@@ -496,7 +499,7 @@ export function ProjectPage() {
 
       {isMovingTask && <div className="fixed bottom-5 right-5 z-40 rounded-xl bg-ink-950 px-4 py-3 text-sm font-bold text-white shadow-float" role="status">Actualizando tarea…</div>}
 
-      <TaskDrawer task={selectedTask} open={Boolean(selectedTask)} onOpenChange={(open) => !open && setSelectedTask(undefined)} />
+      <TaskDrawer task={selectedTaskCurrent} open={Boolean(selectedTaskCurrent)} onOpenChange={(open) => !open && setSelectedTask(undefined)} />
     </div>
   );
 }

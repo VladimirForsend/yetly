@@ -1,4 +1,4 @@
--- Yetly Cloud schema v1.2
+-- Yetly Cloud schema v1.3
 -- Ejecutar completo en Supabase Dashboard > SQL Editor.
 -- No requiere service_role en Yetly. La app usa únicamente Project URL + publishable key.
 
@@ -10,7 +10,7 @@ create table if not exists public.yetly_schema_meta (
   installed_at timestamptz not null default now()
 );
 insert into public.yetly_schema_meta (id, version)
-values (1, 12)
+values (1, 13)
 on conflict (id) do update set version = excluded.version;
 
 create table if not exists public.profiles (
@@ -84,9 +84,71 @@ create table if not exists public.tasks (
   labels text[] not null default '{}',
   blocked_reason text,
   completed boolean not null default false,
+  mode text not null default 'standard' check (mode in ('standard','checklist','message')),
   created_by uuid not null references auth.users(id) on delete restrict,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
+);
+
+alter table public.tasks
+  add column if not exists mode text not null default 'standard';
+do $$
+begin
+  alter table public.tasks add constraint tasks_mode_check check (mode in ('standard','checklist','message'));
+exception when duplicate_object then null;
+end $$;
+
+create table if not exists public.task_checklist_items (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  task_id uuid not null references public.tasks(id) on delete cascade,
+  text text not null check (char_length(trim(text)) >= 1),
+  completed boolean not null default false,
+  created_by uuid not null references auth.users(id) on delete cascade,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.task_messages (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  task_id uuid not null references public.tasks(id) on delete cascade,
+  author_id uuid not null references auth.users(id) on delete cascade,
+  body text not null check (char_length(trim(body)) >= 1),
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.task_attachments (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  task_id uuid not null references public.tasks(id) on delete cascade,
+  storage_path text not null unique,
+  file_name text not null,
+  content_type text not null default 'application/octet-stream',
+  size_bytes bigint not null check (size_bytes >= 0),
+  version integer not null default 1 check (version > 0),
+  uploaded_by uuid not null references auth.users(id) on delete restrict,
+  uploaded_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  deleted_at timestamptz
+);
+
+create table if not exists public.task_events (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  task_id uuid not null references public.tasks(id) on delete cascade,
+  actor_id uuid not null references auth.users(id) on delete restrict,
+  action text not null,
+  detail text not null default '',
+  created_at timestamptz not null default now()
+);
+
+create table if not exists public.team_messages (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  author_id uuid not null references auth.users(id) on delete cascade,
+  body text not null check (char_length(trim(body)) >= 1),
+  created_at timestamptz not null default now()
 );
 
 create table if not exists public.time_entries (
@@ -125,6 +187,11 @@ create index if not exists idx_projects_org on public.projects(organization_id);
 create index if not exists idx_tasks_org on public.tasks(organization_id);
 create index if not exists idx_tasks_project on public.tasks(project_id);
 create index if not exists idx_tasks_assignee on public.tasks(assignee_id);
+create index if not exists idx_task_checklist_task on public.task_checklist_items(task_id);
+create index if not exists idx_task_messages_task on public.task_messages(task_id, created_at);
+create index if not exists idx_task_attachments_task on public.task_attachments(task_id, uploaded_at);
+create index if not exists idx_task_events_task on public.task_events(task_id, created_at);
+create index if not exists idx_team_messages_org on public.team_messages(organization_id, created_at);
 create index if not exists idx_time_entries_org on public.time_entries(organization_id);
 create index if not exists idx_time_entries_user on public.time_entries(user_id);
 create index if not exists idx_activities_org on public.activities(organization_id);
@@ -302,6 +369,11 @@ alter table public.teams enable row level security;
 alter table public.team_members enable row level security;
 alter table public.projects enable row level security;
 alter table public.tasks enable row level security;
+alter table public.task_checklist_items enable row level security;
+alter table public.task_messages enable row level security;
+alter table public.task_attachments enable row level security;
+alter table public.task_events enable row level security;
+alter table public.team_messages enable row level security;
 alter table public.time_entries enable row level security;
 alter table public.activities enable row level security;
 alter table public.active_timers enable row level security;
@@ -472,14 +544,59 @@ drop policy if exists "members update tasks" on public.tasks;
 create policy "members update tasks"
 on public.tasks for update
 to authenticated
-using (public.yetly_is_org_member(organization_id))
-with check (public.yetly_is_org_member(organization_id));
+using (created_by = auth.uid() or public.yetly_is_org_admin(organization_id))
+with check (created_by = auth.uid() or public.yetly_is_org_admin(organization_id));
 
 drop policy if exists "members delete tasks" on public.tasks;
 create policy "members delete tasks"
 on public.tasks for delete
 to authenticated
+using (created_by = auth.uid() or public.yetly_is_org_admin(organization_id));
+
+drop policy if exists "members read checklist" on public.task_checklist_items;
+create policy "members read checklist" on public.task_checklist_items for select to authenticated
 using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create checklist" on public.task_checklist_items;
+create policy "members create checklist" on public.task_checklist_items for insert to authenticated
+with check (public.yetly_is_org_member(organization_id) and created_by = auth.uid());
+drop policy if exists "members update checklist" on public.task_checklist_items;
+create policy "members update checklist" on public.task_checklist_items for update to authenticated
+using (public.yetly_is_org_member(organization_id)) with check (public.yetly_is_org_member(organization_id));
+drop policy if exists "members delete checklist" on public.task_checklist_items;
+create policy "members delete checklist" on public.task_checklist_items for delete to authenticated
+using (created_by = auth.uid() or public.yetly_is_org_admin(organization_id));
+
+drop policy if exists "members read task messages" on public.task_messages;
+create policy "members read task messages" on public.task_messages for select to authenticated
+using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create task messages" on public.task_messages;
+create policy "members create task messages" on public.task_messages for insert to authenticated
+with check (public.yetly_is_org_member(organization_id) and author_id = auth.uid());
+
+drop policy if exists "members read task attachments" on public.task_attachments;
+create policy "members read task attachments" on public.task_attachments for select to authenticated
+using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create task attachments" on public.task_attachments;
+create policy "members create task attachments" on public.task_attachments for insert to authenticated
+with check (public.yetly_is_org_member(organization_id) and uploaded_by = auth.uid());
+drop policy if exists "uploaders update task attachments" on public.task_attachments;
+create policy "uploaders update task attachments" on public.task_attachments for update to authenticated
+using (uploaded_by = auth.uid() or public.yetly_is_org_admin(organization_id))
+with check (uploaded_by = auth.uid() or public.yetly_is_org_admin(organization_id));
+
+drop policy if exists "members read task events" on public.task_events;
+create policy "members read task events" on public.task_events for select to authenticated
+using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create task events" on public.task_events;
+create policy "members create task events" on public.task_events for insert to authenticated
+with check (public.yetly_is_org_member(organization_id) and actor_id = auth.uid());
+
+drop policy if exists "members read team messages" on public.team_messages;
+create policy "members read team messages" on public.team_messages for select to authenticated
+using (public.yetly_is_org_member(organization_id));
+drop policy if exists "members create team messages" on public.team_messages;
+create policy "members create team messages" on public.team_messages for insert to authenticated
+with check (public.yetly_is_org_member(organization_id) and author_id = auth.uid());
 
 drop policy if exists "members read time entries" on public.time_entries;
 create policy "members read time entries"
@@ -554,7 +671,8 @@ using (user_id = auth.uid());
 
 revoke all on public.yetly_schema_meta, public.profiles, public.organizations,
   public.organization_members, public.teams, public.team_members, public.projects,
-  public.tasks, public.time_entries, public.activities, public.active_timers
+  public.tasks, public.task_checklist_items, public.task_messages, public.task_attachments,
+  public.task_events, public.team_messages, public.time_entries, public.activities, public.active_timers
 from anon, authenticated;
 
 grant select on public.yetly_schema_meta to anon, authenticated;
@@ -565,6 +683,11 @@ grant select, insert, update, delete on public.teams to authenticated;
 grant select, insert, update, delete on public.team_members to authenticated;
 grant select, insert, update, delete on public.projects to authenticated;
 grant select, insert, update, delete on public.tasks to authenticated;
+grant select, insert, update, delete on public.task_checklist_items to authenticated;
+grant select, insert on public.task_messages to authenticated;
+grant select, insert, update on public.task_attachments to authenticated;
+grant select, insert on public.task_events to authenticated;
+grant select, insert on public.team_messages to authenticated;
 grant select, insert, update, delete on public.time_entries to authenticated;
 grant select, insert on public.activities to authenticated;
 grant select, insert, update, delete on public.active_timers to authenticated;
@@ -576,6 +699,39 @@ grant execute on function public.yetly_upsert_my_profile(text, text) to authenti
 grant execute on function public.yetly_create_organization(text, text, text) to authenticated;
 grant execute on function public.yetly_join_organization(text, text, text) to authenticated;
 grant execute on function public.yetly_rotate_invite_code(uuid) to authenticated;
+
+insert into storage.buckets (id, name, public, file_size_limit)
+values ('yetly-task-files', 'yetly-task-files', false, 52428800)
+on conflict (id) do update set public = false, file_size_limit = excluded.file_size_limit;
+
+drop policy if exists "org members read yetly task files" on storage.objects;
+create policy "org members read yetly task files" on storage.objects for select to authenticated
+using (
+  bucket_id = 'yetly-task-files'
+  and public.yetly_is_org_member((storage.foldername(name))[1]::uuid)
+);
+drop policy if exists "org members upload yetly task files" on storage.objects;
+create policy "org members upload yetly task files" on storage.objects for insert to authenticated
+with check (
+  bucket_id = 'yetly-task-files'
+  and public.yetly_is_org_member((storage.foldername(name))[1]::uuid)
+);
+drop policy if exists "file owners update yetly task files" on storage.objects;
+create policy "file owners update yetly task files" on storage.objects for update to authenticated
+using (
+  bucket_id = 'yetly-task-files'
+  and (owner_id = auth.uid()::text or public.yetly_is_org_admin((storage.foldername(name))[1]::uuid))
+)
+with check (
+  bucket_id = 'yetly-task-files'
+  and (owner_id = auth.uid()::text or public.yetly_is_org_admin((storage.foldername(name))[1]::uuid))
+);
+drop policy if exists "file owners delete yetly task files" on storage.objects;
+create policy "file owners delete yetly task files" on storage.objects for delete to authenticated
+using (
+  bucket_id = 'yetly-task-files'
+  and (owner_id = auth.uid()::text or public.yetly_is_org_admin((storage.foldername(name))[1]::uuid))
+);
 
 do $$
 begin
@@ -610,6 +766,31 @@ end $$;
 do $$
 begin
   alter publication supabase_realtime add table public.profiles;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.task_checklist_items;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.task_messages;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.task_attachments;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.task_events;
+exception when duplicate_object then null;
+end $$;
+do $$
+begin
+  alter publication supabase_realtime add table public.team_messages;
 exception when duplicate_object then null;
 end $$;
 

@@ -24,6 +24,7 @@ import { useWorkspace } from "../providers/app-providers";
 import { QuickAddDialog } from "../../features/tasks/components/quick-add-dialog";
 import { Avatar } from "../../shared/ui/avatar";
 import { cn } from "../../shared/lib/cn";
+import { TeamChat } from "../../features/chat/components/team-chat";
 
 const navigation = [
   { to: "/home", label: "Inicio", Icon: Home },
@@ -355,6 +356,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {children}
         </main>
       </div>
+      <TeamChat />
     </div>
   );
 }

@@ -12,6 +12,7 @@ import type {
   ProjectHealth,
   ProjectStatus,
   ProjectSummary,
+  TaskMode,
   TaskStatus,
   TaskSummary,
   TeamSummary,
@@ -21,6 +22,7 @@ import type {
   WorkspacePort,
   WorkspaceSnapshot,
 } from "../../application/ports/workspace-port";
+import { cacheTaskFile, getCachedTaskFile, hasCachedTaskFile, removeCachedTaskFile } from "../local/task-file-cache";
 import {
   getSupabaseClient,
   projectRefFromUrl,
@@ -30,6 +32,10 @@ import {
 type Row = Record<string, any>;
 
 const accents = ["#6d5dfc", "#2563eb", "#0f766e", "#b45309", "#be123c", "#7c3aed"];
+
+function attachmentCacheKey(attachmentId: string, version: number) {
+  return `${attachmentId}:v${version}`;
+}
 
 function initials(value: string) {
   return value
@@ -148,6 +154,17 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     if (error) console.warn("Yetly: no se pudo registrar actividad", error.message);
   }
 
+  private async taskEvent(orgId: string, taskId: string, userId: string, action: string, detail = "") {
+    const { error } = await this.client.from("task_events").insert({
+      organization_id: orgId,
+      task_id: taskId,
+      actor_id: userId,
+      action,
+      detail,
+    });
+    if (error) console.warn("Yetly: no se pudo registrar el historial de la tarea", error.message);
+  }
+
   private async resolveActiveOrg(organizationId?: string) {
     const { data: authData, error: authError } = await this.client.auth.getUser();
     if (authError || !authData.user) return { user: null as User | null, memberships: [] as Row[], activeId: "" };
@@ -193,6 +210,11 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       entriesResult,
       activitiesResult,
       timerResult,
+      checklistResult,
+      taskMessagesResult,
+      attachmentsResult,
+      taskEventsResult,
+      teamMessagesResult,
     ] = await Promise.all([
       this.client.from("organizations").select("id,name,color,invite_code").in("id", orgIds),
       this.client.from("profiles").select("id,full_name,role_title").eq("id", user.id).maybeSingle(),
@@ -203,11 +225,17 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       this.client.from("time_entries").select("*").eq("organization_id", activeId).order("created_at", { ascending: false }),
       this.client.from("activities").select("*").eq("organization_id", activeId).order("occurred_at", { ascending: false }).limit(20),
       this.client.from("active_timers").select("*").eq("user_id", user.id).maybeSingle(),
+      this.client.from("task_checklist_items").select("*").eq("organization_id", activeId).order("created_at"),
+      this.client.from("task_messages").select("*").eq("organization_id", activeId).order("created_at"),
+      this.client.from("task_attachments").select("*").eq("organization_id", activeId).order("uploaded_at"),
+      this.client.from("task_events").select("*").eq("organization_id", activeId).order("created_at", { ascending: false }).limit(300),
+      this.client.from("team_messages").select("*").eq("organization_id", activeId).order("created_at", { ascending: false }).limit(100),
     ]);
 
     const firstError = [
       orgResult.error, profileResult.error, teamsResult.error, orgMembersResult.error,
       projectsResult.error, tasksResult.error, entriesResult.error, activitiesResult.error, timerResult.error,
+      checklistResult.error, taskMessagesResult.error, attachmentsResult.error, taskEventsResult.error, teamMessagesResult.error,
     ].find(Boolean);
     if (firstError) throw asError(firstError, "No pudimos cargar el workspace cloud.");
 
@@ -261,6 +289,15 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     const projectRows = projectsResult.data as Row[] ?? [];
     const taskRows = tasksResult.data as Row[] ?? [];
     const entryRows = entriesResult.data as Row[] ?? [];
+    const checklistRows = checklistResult.data as Row[] ?? [];
+    const taskMessageRows = taskMessagesResult.data as Row[] ?? [];
+    const attachmentRows = attachmentsResult.data as Row[] ?? [];
+    const taskEventRows = taskEventsResult.data as Row[] ?? [];
+    const teamMessageRows = teamMessagesResult.data as Row[] ?? [];
+    const cachedAttachmentIds = new Set<string>();
+    await Promise.all(attachmentRows.map(async (attachment) => {
+      if (await hasCachedTaskFile(attachmentCacheKey(attachment.id, Number(attachment.version || 1)))) cachedAttachmentIds.add(attachment.id);
+    }));
 
     const actualByTask = new Map<string, number>();
     for (const entry of entryRows) {
@@ -310,6 +347,40 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       labels: Array.isArray(task.labels) ? task.labels : [],
       blockedReason: task.blocked_reason || undefined,
       completed: Boolean(task.completed),
+      mode: (task.mode || "standard") as TaskMode,
+      createdBy: task.created_by,
+      canEdit: task.created_by === user.id || activeOrganization.memberRole === "owner" || activeOrganization.memberRole === "admin",
+      checklist: checklistRows.filter((item) => item.task_id === task.id).map((item) => ({
+        id: item.id,
+        text: item.text,
+        completed: Boolean(item.completed),
+        createdBy: item.created_by,
+        createdAt: item.created_at,
+      })),
+      messages: taskMessageRows.filter((message) => message.task_id === task.id).map((message) => ({
+        id: message.id,
+        body: message.body,
+        author: profiles.get(message.author_id) ?? currentUser,
+        createdAt: message.created_at,
+      })),
+      attachments: attachmentRows.filter((attachment) => attachment.task_id === task.id).map((attachment) => ({
+        id: attachment.id,
+        fileName: attachment.file_name,
+        contentType: attachment.content_type,
+        sizeBytes: Number(attachment.size_bytes || 0),
+        version: Number(attachment.version || 1),
+        uploadedBy: profiles.get(attachment.uploaded_by) ?? currentUser,
+        uploadedAt: attachment.uploaded_at,
+        deletedAt: attachment.deleted_at || undefined,
+        cachedLocally: cachedAttachmentIds.has(attachment.id),
+      })),
+      history: taskEventRows.filter((event) => event.task_id === task.id).map((event) => ({
+        id: event.id,
+        action: event.action,
+        detail: event.detail || "",
+        actor: profiles.get(event.actor_id) ?? currentUser,
+        createdAt: event.created_at,
+      })),
     }));
 
     const workload = memberIds.map((memberId) => {
@@ -388,6 +459,12 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         durationMinutes: Number(entry.duration_minutes),
         note: entry.note || "",
         source: entry.source,
+      })),
+      teamMessages: teamMessageRows.reverse().map((message) => ({
+        id: message.id,
+        body: message.body,
+        author: profiles.get(message.author_id) ?? currentUser,
+        createdAt: message.created_at,
       })),
       activeTimer: timer && timerTask ? {
         taskId: timerTask.id,
@@ -594,10 +671,12 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       estimate_minutes: Math.max(0, input.estimateMinutes ?? 0),
       assignee_id: input.assigneeId || user.id,
       completed,
+      mode: input.mode ?? "standard",
       created_by: user.id,
     }).select("id").single();
     if (error) throw asError(error, "No pudimos crear la tarea.");
     await this.activity(snapshot.activeOrganization.id, user.id, "creó la tarea", input.title.trim());
+    await this.taskEvent(snapshot.activeOrganization.id, data.id, user.id, "Creó la tarea", input.title.trim());
     const next = await this.getSnapshot();
     return next!.tasks.find((task) => task.id === data.id)!;
   }
@@ -618,8 +697,12 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     if (input.startDate !== undefined) payload.start_date = input.startDate || null;
     if (input.estimateMinutes !== undefined) payload.estimate_minutes = Math.max(0, input.estimateMinutes);
     if (input.assigneeId !== undefined) payload.assignee_id = input.assigneeId || null;
+    if (input.mode !== undefined) payload.mode = input.mode;
     const { error } = await this.client.from("tasks").update(payload).eq("id", taskId);
     if (error) throw asError(error, "No pudimos actualizar la tarea.");
+    const user = await this.requireUser();
+    const current = await this.getSnapshot();
+    if (current) await this.taskEvent(current.activeOrganization.id, taskId, user.id, "Actualizó la tarea", "Cambió sus campos o modo");
     const next = await this.getSnapshot();
     const task = next?.tasks.find((item) => item.id === taskId);
     if (!task) throw new Error("No pudimos recuperar la tarea actualizada.");
@@ -633,6 +716,147 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   async deleteTask(taskId: string): Promise<void> {
     const { error } = await this.client.from("tasks").delete().eq("id", taskId);
     if (error) throw asError(error, "No pudimos eliminar la tarea.");
+  }
+
+  async addTaskMessage(taskId: string, body: string): Promise<void> {
+    assertText(body, "El mensaje", 1);
+    const user = await this.requireUser();
+    const snapshot = await this.getSnapshot();
+    const task = snapshot?.tasks.find((item) => item.id === taskId);
+    if (!snapshot || !task) throw new Error("No se encontró la tarea.");
+    const { error } = await this.client.from("task_messages").insert({
+      organization_id: snapshot.activeOrganization.id,
+      task_id: taskId,
+      author_id: user.id,
+      body: body.trim(),
+    });
+    if (error) throw asError(error, "No pudimos enviar el mensaje de tarea.");
+    await this.taskEvent(snapshot.activeOrganization.id, taskId, user.id, "Añadió un mensaje", body.trim().slice(0, 120));
+  }
+
+  async addChecklistItem(taskId: string, text: string): Promise<void> {
+    assertText(text, "El elemento", 1);
+    const user = await this.requireUser();
+    const snapshot = await this.getSnapshot();
+    if (!snapshot?.tasks.some((item) => item.id === taskId)) throw new Error("No se encontró la tarea.");
+    const { error } = await this.client.from("task_checklist_items").insert({
+      organization_id: snapshot.activeOrganization.id,
+      task_id: taskId,
+      text: text.trim(),
+      created_by: user.id,
+    });
+    if (error) throw asError(error, "No pudimos añadir el elemento.");
+    await this.taskEvent(snapshot.activeOrganization.id, taskId, user.id, "Añadió un elemento", text.trim());
+  }
+
+  async setChecklistItemCompleted(itemId: string, completed: boolean): Promise<void> {
+    const user = await this.requireUser();
+    const { data: item, error: readError } = await this.client.from("task_checklist_items").select("task_id,organization_id,text").eq("id", itemId).single();
+    if (readError) throw asError(readError, "No pudimos leer el elemento.");
+    const { error } = await this.client.from("task_checklist_items").update({ completed, updated_at: new Date().toISOString() }).eq("id", itemId);
+    if (error) throw asError(error, "No pudimos actualizar el elemento.");
+    await this.taskEvent(item.organization_id, item.task_id, user.id, completed ? "Completó un elemento" : "Reabrió un elemento", item.text);
+  }
+
+  async deleteChecklistItem(itemId: string): Promise<void> {
+    const user = await this.requireUser();
+    const { data: item, error: readError } = await this.client.from("task_checklist_items").select("task_id,organization_id,text").eq("id", itemId).single();
+    if (readError) throw asError(readError, "No pudimos leer el elemento.");
+    const { error } = await this.client.from("task_checklist_items").delete().eq("id", itemId);
+    if (error) throw asError(error, "No pudimos eliminar el elemento.");
+    await this.taskEvent(item.organization_id, item.task_id, user.id, "Eliminó un elemento", item.text);
+  }
+
+  async uploadTaskAttachment(taskId: string, file: File): Promise<void> {
+    if (!file.size) throw new Error("El archivo está vacío.");
+    if (file.size > 50 * 1024 * 1024) throw new Error("El archivo supera el máximo de 50 MB.");
+    const user = await this.requireUser();
+    const snapshot = await this.getSnapshot();
+    if (!snapshot?.tasks.some((item) => item.id === taskId)) throw new Error("No se encontró la tarea.");
+    const attachmentId = crypto.randomUUID();
+    const storagePath = `${snapshot.activeOrganization.id}/${taskId}/${attachmentId}/file`;
+    const { error: uploadError } = await this.client.storage.from("yetly-task-files").upload(storagePath, file, {
+      contentType: file.type || "application/octet-stream",
+      upsert: false,
+    });
+    if (uploadError) throw asError(uploadError, "No pudimos subir el adjunto.");
+    const { error } = await this.client.from("task_attachments").insert({
+      id: attachmentId,
+      organization_id: snapshot.activeOrganization.id,
+      task_id: taskId,
+      storage_path: storagePath,
+      file_name: file.name,
+      content_type: file.type || "application/octet-stream",
+      size_bytes: file.size,
+      uploaded_by: user.id,
+    });
+    if (error) {
+      await this.client.storage.from("yetly-task-files").remove([storagePath]);
+      throw asError(error, "El archivo subió, pero no pudimos registrarlo.");
+    }
+    await cacheTaskFile(attachmentCacheKey(attachmentId, 1), file);
+    await this.taskEvent(snapshot.activeOrganization.id, taskId, user.id, "Añadió un adjunto", file.name);
+  }
+
+  async replaceTaskAttachment(attachmentId: string, file: File): Promise<void> {
+    if (!file.size || file.size > 50 * 1024 * 1024) throw new Error("El archivo debe pesar entre 1 byte y 50 MB.");
+    const user = await this.requireUser();
+    const { data: attachment, error: readError } = await this.client.from("task_attachments").select("*").eq("id", attachmentId).single();
+    if (readError || attachment.deleted_at) throw asError(readError, "El adjunto ya no está disponible.");
+    const { error: uploadError } = await this.client.storage.from("yetly-task-files").upload(attachment.storage_path, file, {
+      contentType: file.type || "application/octet-stream",
+      upsert: true,
+    });
+    if (uploadError) throw asError(uploadError, "No pudimos reemplazar el archivo.");
+    const { error } = await this.client.from("task_attachments").update({
+      file_name: file.name,
+      content_type: file.type || "application/octet-stream",
+      size_bytes: file.size,
+      version: Number(attachment.version || 1) + 1,
+      updated_at: new Date().toISOString(),
+    }).eq("id", attachmentId);
+    if (error) throw asError(error, "El archivo cambió, pero no pudimos actualizar sus datos.");
+    const previousVersion = Number(attachment.version || 1);
+    await removeCachedTaskFile(attachmentCacheKey(attachmentId, previousVersion));
+    await cacheTaskFile(attachmentCacheKey(attachmentId, previousVersion + 1), file);
+    await this.taskEvent(attachment.organization_id, attachment.task_id, user.id, "Actualizó un adjunto", `${attachment.file_name} → ${file.name}`);
+  }
+
+  async downloadTaskAttachment(attachmentId: string): Promise<{ blob: Blob; fileName: string }> {
+    const { data: attachment, error: readError } = await this.client.from("task_attachments").select("storage_path,file_name,deleted_at,version").eq("id", attachmentId).single();
+    if (readError || attachment.deleted_at) throw asError(readError, "El adjunto fue eliminado y ya no se puede descargar.");
+    const cacheKey = attachmentCacheKey(attachmentId, Number(attachment.version || 1));
+    const cached = await getCachedTaskFile(cacheKey);
+    if (cached) return { blob: cached, fileName: attachment.file_name };
+    const { data, error } = await this.client.storage.from("yetly-task-files").download(attachment.storage_path);
+    if (error || !data) throw asError(error, "No pudimos descargar el adjunto.");
+    await cacheTaskFile(cacheKey, data);
+    return { blob: data, fileName: attachment.file_name };
+  }
+
+  async deleteTaskAttachment(attachmentId: string): Promise<void> {
+    const user = await this.requireUser();
+    const { data: attachment, error: readError } = await this.client.from("task_attachments").select("*").eq("id", attachmentId).single();
+    if (readError) throw asError(readError, "No pudimos leer el adjunto.");
+    const { error: storageError } = await this.client.storage.from("yetly-task-files").remove([attachment.storage_path]);
+    if (storageError) throw asError(storageError, "No pudimos eliminar el archivo remoto.");
+    const { error } = await this.client.from("task_attachments").update({ deleted_at: new Date().toISOString() }).eq("id", attachmentId);
+    if (error) throw asError(error, "El archivo se eliminó, pero no pudimos registrar la acción.");
+    await removeCachedTaskFile(attachmentCacheKey(attachmentId, Number(attachment.version || 1)));
+    await this.taskEvent(attachment.organization_id, attachment.task_id, user.id, "Eliminó un adjunto", attachment.file_name);
+  }
+
+  async sendTeamMessage(body: string): Promise<void> {
+    assertText(body, "El mensaje", 1);
+    const user = await this.requireUser();
+    const snapshot = await this.getSnapshot();
+    if (!snapshot) throw new Error("No hay organización activa.");
+    const { error } = await this.client.from("team_messages").insert({
+      organization_id: snapshot.activeOrganization.id,
+      author_id: user.id,
+      body: body.trim(),
+    });
+    if (error) throw asError(error, "No pudimos enviar el mensaje al equipo.");
   }
 
   async startTimer(taskId: string): Promise<void> {
@@ -808,7 +1032,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
   }
 
   subscribe(onChange: () => void): () => void {
-    const tables = ["projects", "tasks", "time_entries", "teams", "team_members", "organization_members", "profiles"];
+    const tables = ["projects", "tasks", "task_checklist_items", "task_messages", "task_attachments", "task_events", "team_messages", "time_entries", "teams", "team_members", "organization_members", "profiles"];
     let channel: RealtimeChannel = this.client.channel(`yetly-workspace-${crypto.randomUUID()}`);
     for (const table of tables) {
       channel = channel.on(

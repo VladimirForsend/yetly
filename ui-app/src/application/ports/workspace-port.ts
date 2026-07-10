@@ -2,6 +2,7 @@ export type ProjectHealth = "green" | "yellow" | "red" | "unknown";
 export type ProjectStatus = "planned" | "active" | "on_hold" | "completed";
 export type TaskStatus = "backlog" | "todo" | "in_progress" | "review" | "done";
 export type Priority = "low" | "normal" | "high" | "urgent";
+export type TaskMode = "standard" | "checklist" | "message";
 
 export interface OrganizationSummary {
   id: string;
@@ -52,6 +53,55 @@ export interface TaskSummary {
   labels: string[];
   blockedReason?: string;
   completed: boolean;
+  mode: TaskMode;
+  createdBy: string;
+  canEdit: boolean;
+  checklist: TaskChecklistItem[];
+  messages: TaskMessage[];
+  attachments: TaskAttachment[];
+  history: TaskHistoryItem[];
+}
+
+export interface TaskChecklistItem {
+  id: string;
+  text: string;
+  completed: boolean;
+  createdBy: string;
+  createdAt: string;
+}
+
+export interface TaskMessage {
+  id: string;
+  body: string;
+  author: PersonSummary;
+  createdAt: string;
+}
+
+export interface TaskAttachment {
+  id: string;
+  fileName: string;
+  contentType: string;
+  sizeBytes: number;
+  version: number;
+  uploadedBy: PersonSummary;
+  uploadedAt: string;
+  deletedAt?: string;
+  cachedLocally: boolean;
+}
+
+export interface TaskHistoryItem {
+  id: string;
+  action: string;
+  detail: string;
+  actor: PersonSummary;
+  createdAt: string;
+}
+
+export interface TeamMessage {
+  id: string;
+  body: string;
+  author: PersonSummary;
+  createdAt: string;
 }
 
 export interface TeamSummary {
@@ -111,6 +161,7 @@ export interface WorkspaceSnapshot {
   notifications: NotificationSummary[];
   weeklyTime: WeeklyTimePoint[];
   timeEntries: TimeEntrySummary[];
+  teamMessages: TeamMessage[];
   activeTimer?: {
     taskId: string;
     taskTitle: string;
@@ -160,6 +211,7 @@ export interface CreateTaskInput {
   startDate?: string;
   estimateMinutes?: number;
   assigneeId?: string;
+  mode?: TaskMode;
 }
 
 export interface UpdateTaskInput {
@@ -171,6 +223,7 @@ export interface UpdateTaskInput {
   startDate?: string;
   estimateMinutes?: number;
   assigneeId?: string;
+  mode?: TaskMode;
 }
 
 export interface CreateTimeEntryInput {
@@ -204,6 +257,15 @@ export interface WorkspacePort {
   updateTask(taskId: string, input: UpdateTaskInput): Promise<TaskSummary>;
   moveTask(taskId: string, status: TaskStatus): Promise<TaskSummary>;
   deleteTask(taskId: string): Promise<void>;
+  addTaskMessage(taskId: string, body: string): Promise<void>;
+  addChecklistItem(taskId: string, text: string): Promise<void>;
+  setChecklistItemCompleted(itemId: string, completed: boolean): Promise<void>;
+  deleteChecklistItem(itemId: string): Promise<void>;
+  uploadTaskAttachment(taskId: string, file: File): Promise<void>;
+  replaceTaskAttachment(attachmentId: string, file: File): Promise<void>;
+  downloadTaskAttachment(attachmentId: string): Promise<{ blob: Blob; fileName: string }>;
+  deleteTaskAttachment(attachmentId: string): Promise<void>;
+  sendTeamMessage(body: string): Promise<void>;
   startTimer(taskId: string): Promise<void>;
   stopTimer(): Promise<TimeEntrySummary>;
   createTimeEntry(input: CreateTimeEntryInput): Promise<TimeEntrySummary>;

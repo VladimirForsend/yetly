@@ -74,6 +74,15 @@ export class HybridWorkspaceAdapter implements WorkspacePort {
   updateTask(taskId: string, input: UpdateTaskInput) { return this.active().updateTask(taskId, input); }
   moveTask(taskId: string, status: TaskStatus) { return this.active().moveTask(taskId, status); }
   deleteTask(taskId: string) { return this.active().deleteTask(taskId); }
+  addTaskMessage(taskId: string, body: string) { return this.active().addTaskMessage(taskId, body); }
+  addChecklistItem(taskId: string, text: string) { return this.active().addChecklistItem(taskId, text); }
+  setChecklistItemCompleted(itemId: string, completed: boolean) { return this.active().setChecklistItemCompleted(itemId, completed); }
+  deleteChecklistItem(itemId: string) { return this.active().deleteChecklistItem(itemId); }
+  uploadTaskAttachment(taskId: string, file: File) { return this.active().uploadTaskAttachment(taskId, file); }
+  replaceTaskAttachment(attachmentId: string, file: File) { return this.active().replaceTaskAttachment(attachmentId, file); }
+  downloadTaskAttachment(attachmentId: string) { return this.active().downloadTaskAttachment(attachmentId); }
+  deleteTaskAttachment(attachmentId: string) { return this.active().deleteTaskAttachment(attachmentId); }
+  sendTeamMessage(body: string) { return this.active().sendTeamMessage(body); }
   startTimer(taskId: string) { return this.active().startTimer(taskId); }
   stopTimer() { return this.active().stopTimer(); }
   createTimeEntry(input: CreateTimeEntryInput) { return this.active().createTimeEntry(input); }

@@ -72,6 +72,15 @@ interface WorkspaceContextValue {
   createTask: (input: CreateTaskInput) => Promise<void>;
   updateTask: (taskId: string, input: UpdateTaskInput) => Promise<void>;
   deleteTask: (taskId: string) => Promise<void>;
+  addTaskMessage: (taskId: string, body: string) => Promise<void>;
+  addChecklistItem: (taskId: string, text: string) => Promise<void>;
+  setChecklistItemCompleted: (itemId: string, completed: boolean) => Promise<void>;
+  deleteChecklistItem: (itemId: string) => Promise<void>;
+  uploadTaskAttachment: (taskId: string, file: File) => Promise<void>;
+  replaceTaskAttachment: (attachmentId: string, file: File) => Promise<void>;
+  downloadTaskAttachment: (attachmentId: string) => Promise<{ blob: Blob; fileName: string }>;
+  deleteTaskAttachment: (attachmentId: string) => Promise<void>;
+  sendTeamMessage: (body: string) => Promise<void>;
   moveTask: (taskId: string, status: TaskStatus) => Promise<void>;
   startTimer: (taskId: string) => Promise<void>;
   stopTimer: () => Promise<void>;
@@ -312,6 +321,19 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
       createTask: async (input) => { await createMutation.mutateAsync(input); },
       updateTask: async (taskId, input) => { await updateTaskMutation.mutateAsync({ taskId, input }); },
       deleteTask: async (taskId) => { await deleteTaskMutation.mutateAsync(taskId); },
+      addTaskMessage: async (taskId, body) => { await workspacePort.addTaskMessage(taskId, body); await refresh(); },
+      addChecklistItem: async (taskId, text) => { await workspacePort.addChecklistItem(taskId, text); await refresh(); },
+      setChecklistItemCompleted: async (itemId, completed) => { await workspacePort.setChecklistItemCompleted(itemId, completed); await refresh(); },
+      deleteChecklistItem: async (itemId) => { await workspacePort.deleteChecklistItem(itemId); await refresh(); },
+      uploadTaskAttachment: async (taskId, file) => { await workspacePort.uploadTaskAttachment(taskId, file); await refresh(); },
+      replaceTaskAttachment: async (attachmentId, file) => { await workspacePort.replaceTaskAttachment(attachmentId, file); await refresh(); },
+      downloadTaskAttachment: async (attachmentId) => {
+        const result = await workspacePort.downloadTaskAttachment(attachmentId);
+        await refresh();
+        return result;
+      },
+      deleteTaskAttachment: async (attachmentId) => { await workspacePort.deleteTaskAttachment(attachmentId); await refresh(); },
+      sendTeamMessage: async (body) => { await workspacePort.sendTeamMessage(body); await refresh(); },
       moveTask: async (taskId, status) => { await moveMutation.mutateAsync({ taskId, status }); },
       startTimer: async (taskId) => { await timerStartMutation.mutateAsync(taskId); },
       stopTimer: async () => { await timerStopMutation.mutateAsync(); },
