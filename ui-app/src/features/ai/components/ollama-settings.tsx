@@ -79,7 +79,7 @@ export function OllamaSettings() {
       <div className="mt-6 grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(240px,.8fr)]">
         <label>
           <span className="flex items-center gap-2 text-sm font-black text-ink-950"><KeyRound className="h-4 w-4 text-brand-600" /> API key</span>
-          <input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" placeholder={getOllamaConfig() ? "Clave guardada · pega otra para reemplazar" : "Pega tu API key de Ollama"} className="mt-2 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-100" />
+          <input type="password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} autoComplete="off" placeholder={getOllamaConfig() ? "Clave guardada · pega otra para reemplazar" : "Pega la key o la línea OLLAMA_API_KEY=..."} className="mt-2 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-100" />
         </label>
         <label>
           <span className="text-sm font-black text-ink-950">Modelo predeterminado</span>

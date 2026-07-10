@@ -8,6 +8,16 @@ const corsHeaders = {
 
 const allowedEndpoints = new Set(["tags", "show", "chat"]);
 
+function normalizeOllamaApiKey(input: string) {
+  let value = input.trim();
+  const authorizationMatch = value.match(/Authorization:\s*Bearer\s+([^'"\s\\]+)/i);
+  if (authorizationMatch?.[1]) return authorizationMatch[1].trim();
+  const assignmentMatch = value.match(/(?:export\s+)?OLLAMA_API_KEY\s*=\s*([^;\n]+)/i);
+  if (assignmentMatch?.[1]) value = assignmentMatch[1].trim();
+  value = value.replace(/^Bearer\s+/i, "").trim();
+  return value.replace(/^['"`]+|['"`]+$/g, "").trim();
+}
+
 function json(body: unknown, status = 200, source = "proxy") {
   return new Response(JSON.stringify(body), {
     status,
@@ -36,14 +46,15 @@ Deno.serve(async (request) => {
   catch { return json({ error: "invalid json" }, 400); }
 
   if (!input.endpoint || !allowedEndpoints.has(input.endpoint)) return json({ error: "endpoint not allowed" }, 400);
-  if (!input.ollamaApiKey?.trim()) return json({ error: "missing Ollama API key" }, 400);
+  const ollamaApiKey = normalizeOllamaApiKey(input.ollamaApiKey ?? "");
+  if (!ollamaApiKey) return json({ error: "missing Ollama API key" }, 400);
 
   const isTags = input.endpoint === "tags";
   const upstream = await fetch(`https://ollama.com/api/${input.endpoint}`, {
     method: isTags ? "GET" : "POST",
     signal: request.signal,
     headers: {
-      Authorization: `Bearer ${input.ollamaApiKey.trim()}`,
+      Authorization: `Bearer ${ollamaApiKey}`,
       "Content-Type": "application/json",
     },
     body: isTags ? undefined : JSON.stringify(input.payload ?? {}),

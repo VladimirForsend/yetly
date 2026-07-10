@@ -1,4 +1,5 @@
 import type { AiUsage, OllamaConfig, OllamaModel } from "../../features/ai/types";
+import { normalizeOllamaApiKey } from "./ollama-config";
 import { getSupabaseClient, getSupabaseConfig, getStorageMode } from "../supabase/supabase-connection";
 
 type OllamaChatMessage = { role: "system" | "user" | "assistant"; content: string };
@@ -55,7 +56,7 @@ async function request(config: OllamaConfig, path: string, init?: RequestInit, c
       },
       body: JSON.stringify({
         endpoint,
-        ollamaApiKey: config.apiKey,
+        ollamaApiKey: normalizeOllamaApiKey(config.apiKey),
         payload: init?.body ? JSON.parse(String(init.body)) : undefined,
       }),
     });

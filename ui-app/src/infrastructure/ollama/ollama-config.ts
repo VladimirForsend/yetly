@@ -3,13 +3,23 @@ import type { OllamaConfig } from "../../features/ai/types";
 const SESSION_KEY = "yetly:ollama:session";
 const DEVICE_KEY = "yetly:ollama:device";
 
+export function normalizeOllamaApiKey(input: string) {
+  let value = input.trim();
+  const authorizationMatch = value.match(/Authorization:\s*Bearer\s+([^'"\s\\]+)/i);
+  if (authorizationMatch?.[1]) return authorizationMatch[1].trim();
+  const assignmentMatch = value.match(/(?:export\s+)?OLLAMA_API_KEY\s*=\s*([^;\n]+)/i);
+  if (assignmentMatch?.[1]) value = assignmentMatch[1].trim();
+  value = value.replace(/^Bearer\s+/i, "").trim();
+  return value.replace(/^['"`]+|['"`]+$/g, "").trim();
+}
+
 function parse(raw: string | null): OllamaConfig | null {
   if (!raw) return null;
   try {
     const value = JSON.parse(raw) as Partial<OllamaConfig>;
-    if (typeof value.apiKey !== "string" || !value.apiKey.trim()) return null;
+    if (typeof value.apiKey !== "string" || !normalizeOllamaApiKey(value.apiKey)) return null;
     return {
-      apiKey: value.apiKey.trim(),
+      apiKey: normalizeOllamaApiKey(value.apiKey),
       defaultModel: typeof value.defaultModel === "string" ? value.defaultModel : undefined,
       remember: Boolean(value.remember),
     };
@@ -23,8 +33,9 @@ export function getOllamaConfig(): OllamaConfig | null {
 }
 
 export function saveOllamaConfig(config: OllamaConfig) {
-  if (!config.apiKey.trim()) throw new Error("Pega una API key de Ollama.");
-  const normalized = { ...config, apiKey: config.apiKey.trim() };
+  const apiKey = normalizeOllamaApiKey(config.apiKey);
+  if (!apiKey) throw new Error("Pega una API key de Ollama.");
+  const normalized = { ...config, apiKey };
   if (config.remember) {
     window.localStorage.setItem(DEVICE_KEY, JSON.stringify(normalized));
     window.sessionStorage.removeItem(SESSION_KEY);
