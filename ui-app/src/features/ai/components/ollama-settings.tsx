@@ -3,8 +3,9 @@ import { useEffect, useState } from "react";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import { clearOllamaConfig, getOllamaConfig, saveOllamaConfig } from "../../../infrastructure/ollama/ollama-config";
 import { choosePreferredOllamaModel, listOllamaModels, OllamaApiError, validateOllamaApiKey } from "../../../infrastructure/ollama/ollama-client";
-import { dashboardLinks, projectRefFromUrl } from "../../../infrastructure/supabase/supabase-connection";
+import { dashboardLinks, getManagedConnection, projectRefFromUrl } from "../../../infrastructure/supabase/supabase-connection";
 import { Button } from "../../../shared/ui/button";
+import { beginManagedCloudOAuth } from "../../cloud/services/managed-cloud-client";
 import type { OllamaModel } from "../types";
 
 export function OllamaSettings() {
@@ -28,6 +29,7 @@ export function OllamaSettings() {
 
   const supabaseLinks = dashboardLinks(supabaseConfig?.url ?? "");
   const projectRef = projectRefFromUrl(supabaseConfig?.url ?? "");
+  const managedConnection = getManagedConnection();
   const proxyUrl = supabaseConfig ? `${supabaseConfig.url}/functions/v1/ollama-proxy` : "";
   const functionSourceUrl = "https://raw.githubusercontent.com/VladimirForsend/yetly/main/supabase/functions/ollama-proxy/index.ts";
 
@@ -57,6 +59,18 @@ export function OllamaSettings() {
   async function copyFunctionName() {
     await navigator.clipboard.writeText("ollama-proxy");
     setProxyMessage("Nombre copiado: ollama-proxy");
+  }
+
+  async function reconnectForRepair() {
+    setError("");
+    try {
+      await beginManagedCloudOAuth({
+        returnUrl: `${window.location.origin}${window.location.pathname}#/connect-supabase`,
+        workspaceName: "Yetly",
+      });
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No pudimos iniciar la reparación Cloud.");
+    }
   }
 
   async function testAndSave() {
@@ -135,9 +149,14 @@ export function OllamaSettings() {
 
         <article className="rounded-2xl border border-blue-200 bg-blue-50 p-4">
           <span className="grid h-8 w-8 place-items-center rounded-xl bg-blue-700 text-xs font-black text-white">2</span>
-          <h3 className="mt-3 text-sm font-black text-blue-950">El dueño instala el puente Supabase</h3>
-          <p className="mt-1 text-xs leading-5 text-blue-900">Esto se hace una sola vez por proyecto. Los colaboradores no deben crear otra función.</p>
-          {storageMode === "supabase" ? (
+          <h3 className="mt-3 text-sm font-black text-blue-950">{managedConnection ? "Yetly prepara el puente" : "El dueño instala el puente Supabase"}</h3>
+          <p className="mt-1 text-xs leading-5 text-blue-900">{managedConnection ? "Tu instalación es administrada. No necesitas abrir Edge Functions ni copiar código." : "Esto se hace una sola vez por proyecto. Los colaboradores no deben crear otra función."}</p>
+          {managedConnection ? (
+            <div className="mt-3 space-y-3 text-xs leading-5 text-blue-950">
+              <p className="rounded-lg bg-white px-2.5 py-2 font-bold">Cloud administrado · esquema v{managedConnection.schemaVersion} · proyecto <code>{managedConnection.projectRef}</code></p>
+              {proxyStatus === "missing" && <Button type="button" variant="secondary" onClick={() => void reconnectForRepair()}><RefreshCw className="h-4 w-4" /> Reparar Cloud</Button>}
+            </div>
+          ) : storageMode === "supabase" ? (
             <div className="mt-3 space-y-2 text-xs leading-5 text-blue-950">
               <p className="rounded-lg bg-white px-2.5 py-1.5 font-bold">Proyecto conectado: <code>{projectRef || "sin identificar"}</code></p>
               <p><strong>A.</strong> Abre Edge Functions y pulsa <strong>Deploy a new function → Via Editor</strong>.</p>

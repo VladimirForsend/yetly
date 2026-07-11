@@ -24,7 +24,15 @@ npm run preview
 
 Default. Sin login. Si no existe workspace, Yetly crea uno vacío automáticamente.
 
-### Supabase
+### Yetly Cloud administrado
+
+Cuando `VITE_YETLY_MANAGED_CLOUD_URL` está configurado, el dueño solo pulsa **Activar Yetly Cloud**, autoriza Supabase y elige crear o usar un proyecto. El Control Plane instala automáticamente el esquema v18, RLS, Realtime, Storage, Auth y `ollama-proxy`.
+
+La preparación única del servicio está en `supabase/control-plane/README.md`. Para GitHub Pages crea la variable de repositorio `YETLY_MANAGED_CLOUD_URL` con la URL de la función `managed-cloud`.
+
+Los datos locales se respaldan antes del OAuth y se copian directamente al proyecto del dueño; no pasan por el Control Plane. La importación conserva el workspace local y puede continuar sin duplicados si se interrumpe.
+
+### Supabase manual (configuración avanzada)
 
 Ve a `Configuración → Conectar mi Supabase`.
 
@@ -32,7 +40,7 @@ Requiere:
 
 - Project URL
 - Publishable Key
-- ejecutar `supabase/yetly-schema.sql`
+- ejecutar `supabase/yetly-schema.sql` (esquema v18)
 - desplegar la función `ollama-proxy` si usarás Yetly AI
 
 No uses Secret Key ni service_role.

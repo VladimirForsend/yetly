@@ -1111,9 +1111,61 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     } catch {
       throw new Error("El archivo no contiene JSON válido.");
     }
-    const snapshot = parsed?.snapshot as WorkspaceSnapshot | undefined;
+    const snapshot = (parsed?.snapshot ?? parsed?.workspace ?? parsed) as WorkspaceSnapshot & {
+      teams?: Array<{ id: string; name: string }>;
+    };
     if (!snapshot || !Array.isArray(snapshot.projects) || !Array.isArray(snapshot.tasks)) {
-      throw new Error("El respaldo no corresponde a una exportación cloud de Yetly.");
+      throw new Error("El respaldo no corresponde a un workspace Yetly válido.");
+    }
+
+    const installationId = typeof parsed?.installationId === "string"
+      ? parsed.installationId
+      : `manual-${crypto.randomUUID()}`;
+    const active = await this.getSnapshot();
+    if (!active) throw new Error("Primero crea el espacio Cloud antes de migrar los datos locales.");
+    const organizationId = active.activeOrganization.id;
+    const { data: auth } = await this.client.auth.getUser();
+    if (!auth.user) throw new Error("La sesión Cloud venció durante la migración.");
+
+    const { data: mappingRows, error: mappingError } = await this.client
+      .from("cloud_import_mappings")
+      .select("entity_type,local_id,cloud_id,status")
+      .eq("installation_id", installationId);
+    if (mappingError) throw asError(mappingError, "No pudimos preparar la migración reanudable.");
+    const mappings = new Map<string, string>();
+    let teams = 0;
+    let checklistItems = 0;
+    let messages = 0;
+    let workflowConnections = 0;
+    let attachments = 0;
+    let skipped = 0;
+    const issues: NonNullable<ImportResult["issues"]> = [];
+    for (const row of mappingRows ?? []) {
+      if (row.status === "completed" || row.status === "skipped") {
+        mappings.set(`${row.entity_type}:${row.local_id}`, row.cloud_id || "__recorded__");
+      }
+    }
+    const remember = async (entityType: string, localId: string, cloudId?: string, detail = "") => {
+      const { error } = await this.client.from("cloud_import_mappings").upsert({
+        user_id: auth.user!.id,
+        organization_id: organizationId,
+        installation_id: installationId,
+        entity_type: entityType,
+        local_id: localId,
+        cloud_id: cloudId || null,
+        status: cloudId ? "completed" : "skipped",
+        detail,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "user_id,installation_id,entity_type,local_id" });
+      if (error) throw asError(error, "No pudimos guardar el avance de migración.");
+      mappings.set(`${entityType}:${localId}`, cloudId || "__recorded__");
+    };
+
+    for (const team of snapshot.teams ?? []) {
+      if (mappings.has(`team:${team.id}`)) { teams += 1; continue; }
+      const created = await this.createTeam({ name: team.name });
+      await remember("team", team.id, created.id);
+      teams += 1;
     }
 
     const projectMap = new Map<string, string>();
@@ -1122,6 +1174,12 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     let timeEntries = 0;
 
     for (const project of snapshot.projects) {
+      const rememberedId = mappings.get(`project:${project.id}`);
+      if (rememberedId) {
+        projectMap.set(project.id, rememberedId);
+        projects += 1;
+        continue;
+      }
       await this.createProject({
         name: project.name,
         code: project.code,
@@ -1133,12 +1191,19 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       const created = next?.projects.find((item) => item.code === project.code || item.name === project.name);
       if (created) {
         projectMap.set(project.id, created.id);
+        await remember("project", project.id, created.id);
         projects += 1;
       }
     }
 
     const taskMap = new Map<string, string>();
     for (const task of snapshot.tasks) {
+      const rememberedId = mappings.get(`task:${task.id}`);
+      if (rememberedId) {
+        taskMap.set(task.id, rememberedId);
+        tasks += 1;
+        continue;
+      }
       const projectId = projectMap.get(task.projectId);
       if (!projectId) continue;
       const created = await this.createTask({
@@ -1150,25 +1215,140 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         dueDate: task.dueDate,
         startDate: task.startDate,
         estimateMinutes: task.estimateMinutes,
+        mode: task.mode,
       });
       taskMap.set(task.id, created.id);
+      await remember("task", task.id, created.id);
       tasks += 1;
+
+      for (const item of task.checklist ?? []) {
+        if (mappings.has(`checklist:${item.id}`)) { checklistItems += 1; continue; }
+        await this.addChecklistItem(created.id, item.text);
+        const refreshed = await this.getSnapshot(organizationId);
+        const cloudItem = refreshed?.tasks.find((candidate) => candidate.id === created.id)?.checklist.find((candidate) => candidate.text === item.text);
+        if (cloudItem && item.completed) await this.setChecklistItemCompleted(cloudItem.id, true);
+        await remember("checklist", item.id, cloudItem?.id, cloudItem ? "" : "No se pudo identificar el elemento creado.");
+        if (cloudItem) checklistItems += 1;
+        else { skipped += 1; issues.push({ entityType: "checklist", localId: item.id, message: "No se pudo identificar el elemento creado.", recoverable: true }); }
+      }
+      for (const message of task.messages ?? []) {
+        if (mappings.has(`task_message:${message.id}`)) { messages += 1; continue; }
+        await this.addTaskMessage(created.id, message.body);
+        await remember("task_message", message.id, undefined, `Importado como mensaje del dueño; autor original: ${message.author?.name ?? "desconocido"}.`);
+        messages += 1;
+      }
+      for (const attachment of task.attachments ?? []) {
+        if (mappings.has(`attachment:${attachment.id}`)) { attachments += 1; continue; }
+        const blob = await getCachedTaskFile(attachment.id);
+        if (!blob) {
+          await remember("attachment", attachment.id, undefined, "El archivo binario no estaba disponible en este navegador.");
+          skipped += 1;
+          issues.push({ entityType: "attachment", localId: attachment.id, message: "El archivo binario no estaba disponible en este navegador.", recoverable: false });
+          continue;
+        }
+        await this.uploadTaskAttachment(created.id, new File([blob], attachment.fileName, { type: attachment.contentType }));
+        await remember("attachment", attachment.id, undefined, "Archivo copiado al bucket Cloud.");
+        attachments += 1;
+      }
+      for (const history of task.history ?? []) {
+        if (mappings.has(`task_event:${history.id}`)) continue;
+        const { data: event, error } = await this.client.from("task_events").insert({
+          organization_id: organizationId,
+          task_id: created.id,
+          actor_id: auth.user.id,
+          action: history.action,
+          detail: `${history.detail}${history.actor?.name && history.actor.id !== auth.user.id ? ` · Autor local: ${history.actor.name}` : ""}`,
+          created_at: history.createdAt,
+        }).select("id").single();
+        if (error) {
+          skipped += 1;
+          issues.push({ entityType: "task_event", localId: history.id, message: error.message, recoverable: true });
+        } else {
+          await remember("task_event", history.id, event.id);
+        }
+      }
     }
 
     for (const entry of snapshot.timeEntries ?? []) {
+      if (mappings.has(`time_entry:${entry.id}`)) {
+        timeEntries += 1;
+        continue;
+      }
       const projectId = projectMap.get(entry.projectId);
       if (!projectId) continue;
-      await this.createTimeEntry({
+      const created = await this.createTimeEntry({
         projectId,
         taskId: entry.taskId ? taskMap.get(entry.taskId) : undefined,
         workDate: entry.workDate,
         durationMinutes: entry.durationMinutes,
         note: entry.note,
       });
+      await remember("time_entry", entry.id, created.id);
       timeEntries += 1;
     }
 
-    return { projects, tasks, timeEntries };
+    for (const node of snapshot.workflowNodePositions ?? []) {
+      const projectId = projectMap.get(node.projectId);
+      const taskId = taskMap.get(node.taskId);
+      if (projectId && taskId) await this.saveWorkflowNodePosition(projectId, taskId, node.x, node.y);
+    }
+    for (const connection of snapshot.workflowConnections ?? []) {
+      if (mappings.has(`workflow_connection:${connection.id}`)) { workflowConnections += 1; continue; }
+      const projectId = projectMap.get(connection.projectId);
+      const sourceTaskId = taskMap.get(connection.sourceTaskId);
+      const targetTaskId = taskMap.get(connection.targetTaskId);
+      if (!projectId || !sourceTaskId || !targetTaskId) {
+        await remember("workflow_connection", connection.id, undefined, "Faltó una tarea relacionada.");
+        skipped += 1;
+        issues.push({ entityType: "workflow_connection", localId: connection.id, message: "Faltó una tarea relacionada.", recoverable: false });
+        continue;
+      }
+      await this.createWorkflowConnection(projectId, sourceTaskId, targetTaskId);
+      await remember("workflow_connection", connection.id, undefined, "Conexión Workflow Nodix copiada.");
+      workflowConnections += 1;
+    }
+
+    for (const oldMessage of snapshot.teamMessages ?? []) {
+      if (mappings.has(`team_message:${oldMessage.id}`)) { messages += 1; continue; }
+      const authorPrefix = oldMessage.author?.id !== auth.user.id ? `[${oldMessage.author?.name ?? "Usuario local"}] ` : "";
+      await this.sendTeamMessage(`${authorPrefix}${oldMessage.body}`);
+      await remember("team_message", oldMessage.id, undefined, "Mensaje general copiado.");
+      messages += 1;
+    }
+
+    const conversationMap = new Map<string, string>();
+    const cloudAfterImport = await this.getSnapshot(organizationId);
+    const general = cloudAfterImport?.chatConversations.find((conversation) => conversation.type === "general");
+    for (const conversation of snapshot.chatConversations ?? []) {
+      if (conversation.type === "general" && general) {
+        conversationMap.set(conversation.id, general.id);
+        continue;
+      }
+      if (conversation.type === "direct") {
+        skipped += 1;
+        issues.push({ entityType: "chat_conversation", localId: conversation.id, message: "Los DM locales requieren que la otra persona acepte primero una invitación Cloud.", recoverable: true });
+        continue;
+      }
+      const mapped = mappings.get(`chat_conversation:${conversation.id}`);
+      if (mapped && mapped !== "__recorded__") {
+        conversationMap.set(conversation.id, mapped);
+        continue;
+      }
+      const cloudId = await this.createChatChannel(conversation.name);
+      conversationMap.set(conversation.id, cloudId);
+      await remember("chat_conversation", conversation.id, cloudId);
+    }
+    for (const oldMessage of snapshot.chatMessages ?? []) {
+      if (mappings.has(`chat_message:${oldMessage.id}`)) { messages += 1; continue; }
+      const conversationId = conversationMap.get(oldMessage.conversationId);
+      if (!conversationId) continue;
+      const authorPrefix = oldMessage.author?.id !== auth.user.id ? `[${oldMessage.author?.name ?? "Usuario local"}] ` : "";
+      await this.sendChatMessage(conversationId, `${authorPrefix}${oldMessage.body}`);
+      await remember("chat_message", oldMessage.id, undefined, "Mensaje copiado.");
+      messages += 1;
+    }
+
+    return { projects, tasks, timeEntries, teams, checklistItems, messages, workflowConnections, attachments, skipped, issues };
   }
 
   async resetWorkspace(): Promise<void> {

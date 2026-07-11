@@ -1,0 +1,6 @@
+[functions.managed-cloud]
+verify_jwt = false
+
+[functions.ollama-proxy]
+verify_jwt = true
+

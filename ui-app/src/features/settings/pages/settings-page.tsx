@@ -15,13 +15,15 @@ import {
   Upload,
   Users,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import { createYetlyInviteMessage } from "../../../shared/lib/yetly-invite";
+import { getManagedConnection } from "../../../infrastructure/supabase/supabase-connection";
 import { Button } from "../../../shared/ui/button";
 import { PageHeader } from "../../../shared/ui/page-header";
 import { OllamaSettings } from "../../ai/components/ollama-settings";
+import { completePendingMigration, getPendingMigration } from "../../cloud/services/local-migration-store";
 
 export function SettingsPage() {
   const navigate = useNavigate();
@@ -44,7 +46,49 @@ export function SettingsPage() {
   const [backupMessage, setBackupMessage] = useState("");
   const [backupError, setBackupError] = useState("");
   const [connectionMessage, setConnectionMessage] = useState("");
+  const [hasPendingMigration, setHasPendingMigration] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
+  const managedConnection = getManagedConnection();
+
+  useEffect(() => {
+    if (storageMode !== "supabase") return;
+    void getPendingMigration().then((bundle) => setHasPendingMigration(Boolean(bundle)));
+  }, [storageMode]);
+
+  async function resumeManagedMigration() {
+    setBackupError("");
+    setBackupMessage("");
+    try {
+      const bundle = await getPendingMigration();
+      if (!bundle) return setHasPendingMigration(false);
+      const result = await importSnapshot(JSON.stringify({
+        format: bundle.format,
+        version: bundle.version,
+        installationId: bundle.installationId,
+        workspace: JSON.parse(bundle.workspaceJson),
+      }));
+      await completePendingMigration({
+        installationId: bundle.installationId,
+        completedAt: new Date().toISOString(),
+        projects: result.projects,
+        teams: result.teams ?? 0,
+        tasks: result.tasks,
+        checklistItems: result.checklistItems ?? 0,
+        messages: result.messages ?? 0,
+        timeEntries: result.timeEntries,
+        workflowConnections: result.workflowConnections ?? 0,
+        attachments: result.attachments ?? 0,
+        skipped: result.skipped ?? 0,
+        issues: result.issues ?? [],
+      });
+      window.localStorage.removeItem("yetly:managed-cloud:migration-warning");
+      setHasPendingMigration(false);
+      setBackupMessage(`Migración completada: ${result.projects} proyectos, ${result.tasks} tareas y ${result.timeEntries} registros de tiempo.`);
+      refetch();
+    } catch (cause) {
+      setBackupError(cause instanceof Error ? cause.message : "No pudimos continuar la migración.");
+    }
+  }
 
   async function downloadBackup() {
     setBackupError("");
@@ -129,7 +173,7 @@ export function SettingsPage() {
             </span>
             <div>
               <h2 id="storage-mode-heading" className="font-black text-ink-950">
-                {storageMode === "supabase" ? "Supabase conectado" : "Modo local sin login"}
+                {storageMode === "supabase" ? (managedConnection ? "Yetly Cloud administrado" : "Supabase conectado") : "Modo local sin login"}
               </h2>
               <p className="mt-1 max-w-3xl text-sm leading-6 text-ink-700">
                 {storageMode === "supabase"
@@ -140,6 +184,7 @@ export function SettingsPage() {
                 <dl className="mt-4 grid gap-2 text-sm sm:grid-cols-2">
                   <div><dt className="font-black text-ink-700">Proyecto</dt><dd className="mt-0.5 break-all text-ink-600">{supabaseConfig?.url}</dd></div>
                   <div><dt className="font-black text-ink-700">Sesión</dt><dd className="mt-0.5 text-ink-600">{cloudUserEmail ?? "Sin sesión activa"}</dd></div>
+                  {managedConnection && <div><dt className="font-black text-ink-700">Instalación</dt><dd className="mt-0.5 text-ink-600">Administrada · esquema v{managedConnection.schemaVersion}</dd></div>}
                 </dl>
               )}
             </div>
@@ -170,6 +215,18 @@ export function SettingsPage() {
       </section>
 
       <OllamaSettings />
+
+      {storageMode === "supabase" && hasPendingMigration && (
+        <section className="rounded-2xl border border-warning-200 bg-warning-50 p-5 sm:p-6" aria-labelledby="pending-migration-heading">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 id="pending-migration-heading" className="font-black text-warning-950">Migración local pendiente</h2>
+              <p className="mt-1 text-sm leading-6 text-warning-900">Tu respaldo sigue intacto en este navegador. Puedes continuar sin duplicar los elementos que ya alcanzaron a copiarse.</p>
+            </div>
+            <Button onClick={() => void resumeManagedMigration()} disabled={isMutating}><RefreshCw className="h-4 w-4" /> Continuar migración</Button>
+          </div>
+        </section>
+      )}
 
       {storageMode === "supabase" && snapshot?.activeOrganization.inviteCode && (
         <section className="rounded-2xl border border-brand-200 bg-white p-5 shadow-card sm:p-6" aria-labelledby="invite-heading">

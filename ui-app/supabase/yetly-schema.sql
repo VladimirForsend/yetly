@@ -1,4 +1,4 @@
--- Yetly Cloud schema v1.7
+-- Yetly Cloud schema v1.8
 -- Ejecutar completo en Supabase Dashboard > SQL Editor.
 -- No requiere service_role en Yetly. La app usa únicamente Project URL + publishable key.
 
@@ -10,7 +10,7 @@ create table if not exists public.yetly_schema_meta (
   installed_at timestamptz not null default now()
 );
 insert into public.yetly_schema_meta (id, version)
-values (1, 17)
+values (1, 18)
 on conflict (id) do update set version = excluded.version;
 
 create table if not exists public.profiles (
@@ -36,6 +36,23 @@ create table if not exists public.organization_members (
   role text not null default 'member' check (role in ('owner','admin','member','viewer')),
   joined_at timestamptz not null default now(),
   primary key (organization_id, user_id)
+);
+
+-- Registro idempotente de migraciones desde el modo local. Permite reanudar
+-- una importacion sin duplicar entidades si el navegador pierde conexion.
+create table if not exists public.cloud_import_mappings (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  organization_id uuid not null references public.organizations(id) on delete cascade,
+  installation_id text not null,
+  entity_type text not null,
+  local_id text not null,
+  cloud_id uuid,
+  status text not null default 'completed' check (status in ('pending','completed','skipped','failed')),
+  detail text not null default '',
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  unique (user_id, installation_id, entity_type, local_id)
 );
 
 create table if not exists public.teams (
@@ -548,6 +565,7 @@ alter table public.yetly_schema_meta enable row level security;
 alter table public.profiles enable row level security;
 alter table public.organizations enable row level security;
 alter table public.organization_members enable row level security;
+alter table public.cloud_import_mappings enable row level security;
 alter table public.teams enable row level security;
 alter table public.team_members enable row level security;
 alter table public.projects enable row level security;
@@ -573,6 +591,13 @@ create policy "schema version readable"
 on public.yetly_schema_meta for select
 to anon, authenticated
 using (true);
+
+drop policy if exists "users manage own import mappings" on public.cloud_import_mappings;
+create policy "users manage own import mappings"
+on public.cloud_import_mappings for all
+to authenticated
+using (user_id = auth.uid() and public.yetly_is_org_member(organization_id))
+with check (user_id = auth.uid() and public.yetly_is_org_member(organization_id));
 
 drop policy if exists "profiles visible to shared organizations" on public.profiles;
 create policy "profiles visible to shared organizations"
@@ -1033,7 +1058,7 @@ to authenticated
 using (user_id = auth.uid());
 
 revoke all on public.yetly_schema_meta, public.profiles, public.organizations,
-  public.organization_members, public.teams, public.team_members, public.projects,
+  public.organization_members, public.cloud_import_mappings, public.teams, public.team_members, public.projects,
   public.tasks, public.task_checklist_items, public.task_messages, public.task_attachments,
   public.task_events, public.team_messages, public.chat_conversations, public.chat_participants,
   public.chat_messages, public.workflow_node_positions, public.workflow_connections,
@@ -1045,6 +1070,7 @@ grant select on public.yetly_schema_meta to anon, authenticated;
 grant select, update on public.profiles to authenticated;
 grant select, update on public.organizations to authenticated;
 grant select, update, delete on public.organization_members to authenticated;
+grant select, insert, update on public.cloud_import_mappings to authenticated;
 grant select, insert, update, delete on public.teams to authenticated;
 grant select, insert, update, delete on public.team_members to authenticated;
 grant select, insert, update, delete on public.projects to authenticated;

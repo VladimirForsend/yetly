@@ -7,6 +7,14 @@ export interface SupabaseConnectionConfig {
   publishableKey: string;
 }
 
+export interface ManagedConnectionMetadata {
+  managed: true;
+  projectRef: string;
+  installationId: string;
+  schemaVersion: number;
+  controlPlaneUrl: string;
+}
+
 export interface SupabaseProbeResult {
   connected: boolean;
   schemaReady: boolean;
@@ -14,7 +22,7 @@ export interface SupabaseProbeResult {
   message: string;
 }
 
-export const REQUIRED_YETLY_SCHEMA_VERSION = 17;
+export const REQUIRED_YETLY_SCHEMA_VERSION = 18;
 
 const CONNECTION_KEY = "yetly:v1:connection";
 const OAUTH_RETURN_KEY = "yetly:v1:oauth-return";
@@ -92,6 +100,18 @@ export function getSupabaseConfig(): SupabaseConnectionConfig | null {
   }
 }
 
+export function getManagedConnection(): (SupabaseConnectionConfig & ManagedConnectionMetadata) | null {
+  const raw = window.localStorage.getItem(CONNECTION_KEY);
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as { mode?: string; config?: SupabaseConnectionConfig; managed?: ManagedConnectionMetadata };
+    if (parsed.mode !== "supabase" || !parsed.config || parsed.managed?.managed !== true) return null;
+    return { ...validateSupabaseConfig(parsed.config), ...parsed.managed };
+  } catch {
+    return null;
+  }
+}
+
 export function getPublishedSupabaseConfig(): SupabaseConnectionConfig | null {
   const env = import.meta.env;
   const url = env.VITE_YETLY_SUPABASE_URL || env.VITE_SUPABASE_URL || "";
@@ -106,6 +126,20 @@ export function getPublishedSupabaseConfig(): SupabaseConnectionConfig | null {
 export function saveSupabaseConfig(config: SupabaseConnectionConfig) {
   const normalized = validateSupabaseConfig(config);
   window.localStorage.setItem(CONNECTION_KEY, JSON.stringify({ mode: "supabase", config: normalized }));
+  cachedClient = null;
+  cachedSignature = "";
+}
+
+export function saveManagedSupabaseConfig(config: SupabaseConnectionConfig & ManagedConnectionMetadata) {
+  const normalized = validateSupabaseConfig(config);
+  const managed: ManagedConnectionMetadata = {
+    managed: true,
+    projectRef: config.projectRef,
+    installationId: config.installationId,
+    schemaVersion: config.schemaVersion,
+    controlPlaneUrl: config.controlPlaneUrl,
+  };
+  window.localStorage.setItem(CONNECTION_KEY, JSON.stringify({ mode: "supabase", config: normalized, managed }));
   cachedClient = null;
   cachedSignature = "";
 }

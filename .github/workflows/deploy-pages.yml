@@ -39,6 +39,7 @@ jobs:
         env:
           VITE_YETLY_SUPABASE_URL: ${{ vars.YETLY_SUPABASE_URL }}
           VITE_YETLY_SUPABASE_PUBLISHABLE_KEY: ${{ vars.YETLY_SUPABASE_PUBLISHABLE_KEY }}
+          VITE_YETLY_MANAGED_CLOUD_URL: ${{ vars.YETLY_MANAGED_CLOUD_URL }}
         run: npm run build
 
       - name: Configure Pages

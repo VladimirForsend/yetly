@@ -277,6 +277,13 @@ export interface ImportResult {
   projects: number;
   tasks: number;
   timeEntries: number;
+  teams?: number;
+  checklistItems?: number;
+  messages?: number;
+  workflowConnections?: number;
+  attachments?: number;
+  skipped?: number;
+  issues?: Array<{ entityType: string; localId?: string; message: string; recoverable: boolean }>;
 }
 
 export interface WorkspacePort {
