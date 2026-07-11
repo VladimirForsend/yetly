@@ -85,7 +85,7 @@ async function request(config: OllamaConfig, path: string, init?: RequestInit, c
     return response;
   } catch (error) {
     if (error instanceof OllamaApiError || (error instanceof DOMException && error.name === "AbortError")) throw error;
-    throw new OllamaApiError("No pudimos conectar con Ollama Cloud. Revisa tu conexión y vuelve a intentar.");
+    throw new OllamaApiError("No pudimos alcanzar la función ollama-proxy de Supabase. Verifica que el dueño la haya desplegado antes de revisar la API key de Ollama.");
   }
 }
 

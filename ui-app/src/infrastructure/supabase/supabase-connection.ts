@@ -142,10 +142,12 @@ export function dashboardLinks(url: string) {
     sqlEditor: ref ? `${base}/sql/new` : "https://supabase.com/dashboard/projects",
     authProviders: ref ? `${base}/auth/providers` : "https://supabase.com/dashboard/projects",
     authUrlConfig: ref ? `${base}/auth/url-configuration` : "https://supabase.com/dashboard/projects",
+    edgeFunctions: ref ? `${base}/functions` : "https://supabase.com/dashboard/projects",
     docsReact: "https://supabase.com/docs/guides/getting-started/quickstarts/reactjs",
     docsKeys: "https://supabase.com/docs/guides/getting-started/api-keys",
     docsRls: "https://supabase.com/docs/guides/database/postgres/row-level-security",
     docsAuth: "https://supabase.com/docs/guides/auth",
+    docsFunctions: "https://supabase.com/docs/guides/functions/quickstart-dashboard",
   };
 }
 
