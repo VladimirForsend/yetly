@@ -57,6 +57,7 @@ export function OnboardingPage() {
     connectSupabase,
     signUpCloud,
     signInCloud,
+    signInGoogleCloud,
     createWorkspace,
     joinOrganization,
     isMutating,
@@ -85,6 +86,16 @@ export function OnboardingPage() {
     publishableKey: publishableKey.trim(),
   }), [url, publishableKey]);
   const links = useMemo(() => dashboardLinks(url || supabaseConfig?.url || ""), [url, supabaseConfig?.url]);
+
+  useEffect(() => {
+    const oauthParams = new URLSearchParams(window.location.search);
+    const oauthError = oauthParams.get("error_description") || oauthParams.get("error");
+    if (!oauthError) return;
+    setError(/provider|google|unsupported/i.test(oauthError)
+      ? "Google todavía no está habilitado en Supabase. El dueño debe activarlo en Authentication → Providers → Google."
+      : `Google no pudo completar el acceso: ${oauthError}`);
+    window.history.replaceState({}, "", `${window.location.pathname}${window.location.hash}`);
+  }, []);
 
   useEffect(() => {
     if (schemaCheckedRef.current || searchParams.get("invite") || !supabaseConfig) return;
@@ -205,6 +216,19 @@ export function OnboardingPage() {
       setStep(4);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No pudimos completar el acceso.");
+    }
+  }
+
+  async function submitGoogleAuth() {
+    setError("");
+    setAuthMessage("");
+    try {
+      const params = new URLSearchParams();
+      if (inviteCode.trim()) params.set("invite", inviteCode.trim().toUpperCase());
+      const returnHash = `#/connect-supabase${params.size ? `?${params.toString()}` : ""}`;
+      await signInGoogleCloud(returnHash);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No pudimos iniciar sesión con Google.");
     }
   }
 
@@ -461,6 +485,18 @@ export function OnboardingPage() {
                   </div>
                 ) : (
                   <>
+                    <button
+                      type="button"
+                      onClick={() => void submitGoogleAuth()}
+                      disabled={isMutating}
+                      className="mt-6 flex min-h-12 w-full max-w-xl items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-4 text-sm font-black text-ink-900 shadow-sm transition hover:border-brand-300 hover:bg-brand-50 focus:outline-none focus:ring-4 focus:ring-brand-100 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <span className="grid h-6 w-6 place-items-center rounded-full bg-white font-black text-blue-600 shadow-sm" aria-hidden="true">G</span>
+                      Continuar con Google
+                    </button>
+                    <div className="my-5 flex max-w-xl items-center gap-3 text-xs font-bold uppercase tracking-wider text-ink-400">
+                      <span className="h-px flex-1 bg-slate-200" /> o usa email y contraseña <span className="h-px flex-1 bg-slate-200" />
+                    </div>
                     <div className="mt-6 inline-flex rounded-xl bg-slate-100 p-1" role="tablist" aria-label="Acceso Supabase">
                       <button type="button" role="tab" aria-selected={authMode === "signup"} onClick={() => setAuthMode("signup")} className={`rounded-lg px-4 py-2 text-sm font-black ${authMode === "signup" ? "bg-white text-ink-950 shadow-sm" : "text-ink-600"}`}>Crear cuenta</button>
                       <button type="button" role="tab" aria-selected={authMode === "signin"} onClick={() => setAuthMode("signin")} className={`rounded-lg px-4 py-2 text-sm font-black ${authMode === "signin" ? "bg-white text-ink-950 shadow-sm" : "text-ink-600"}`}>Iniciar sesión</button>
@@ -497,6 +533,11 @@ export function OnboardingPage() {
                 <p className="mt-5 text-xs leading-5 text-ink-500">
                   Para despliegues públicos, configura en Supabase la URL de tu sitio Yetly como Site URL y redirect permitida.
                 </p>
+                <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-sm font-black text-blue-900">Activación única para el dueño</p>
+                  <p className="mt-1 text-xs leading-5 text-blue-800">En Auth Providers habilita Google y guarda el Client ID y Client Secret creados en Google Cloud. En Google usa como callback:</p>
+                  <code className="mt-2 block break-all rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-blue-900">{supabaseConfig?.url ? `${supabaseConfig.url}/auth/v1/callback` : "https://TU-PROYECTO.supabase.co/auth/v1/callback"}</code>
+                </div>
               </aside>
             </div>
           )}

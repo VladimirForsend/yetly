@@ -17,6 +17,7 @@ export interface SupabaseProbeResult {
 export const REQUIRED_YETLY_SCHEMA_VERSION = 17;
 
 const CONNECTION_KEY = "yetly:v1:connection";
+const OAUTH_RETURN_KEY = "yetly:v1:oauth-return";
 const LEGACY_LOCAL_MODE = { mode: "local" as const };
 
 let cachedClient: SupabaseClient | null = null;
@@ -239,6 +240,28 @@ export async function signInWithPassword(
   const { data, error } = await client.auth.signInWithPassword({ email: email.trim(), password });
   if (error) throw new Error(error.message);
   return data;
+}
+
+export async function signInWithGoogle(config: SupabaseConnectionConfig, returnHash = "#/connect-supabase") {
+  const client = getSupabaseClient(config);
+  window.sessionStorage.setItem(OAUTH_RETURN_KEY, returnHash.startsWith("#") ? returnHash : `#${returnHash}`);
+  const redirectTo = `${window.location.origin}${window.location.pathname}`;
+  const { error } = await client.auth.signInWithOAuth({
+    provider: "google",
+    options: { redirectTo },
+  });
+  if (error) {
+    window.sessionStorage.removeItem(OAUTH_RETURN_KEY);
+    throw new Error(error.message);
+  }
+}
+
+export function restoreOAuthReturnPath() {
+  const returnHash = window.sessionStorage.getItem(OAUTH_RETURN_KEY);
+  if (!returnHash) return false;
+  window.sessionStorage.removeItem(OAUTH_RETURN_KEY);
+  window.location.hash = returnHash;
+  return true;
 }
 
 export async function signOutSupabase() {

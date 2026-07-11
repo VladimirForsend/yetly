@@ -22,9 +22,11 @@ import {
   onSupabaseAuthChange,
   probeSupabase,
   saveSupabaseConfig,
+  signInWithGoogle,
   signInWithPassword,
   signOutSupabase,
   signUpWithPassword,
+  restoreOAuthReturnPath,
   useLocalMode,
   type StorageMode,
   type SupabaseConnectionConfig,
@@ -58,6 +60,7 @@ interface WorkspaceContextValue {
   disconnectSupabase: () => Promise<void>;
   signUpCloud: (email: string, password: string) => Promise<{ needsEmailConfirmation: boolean }>;
   signInCloud: (email: string, password: string) => Promise<void>;
+  signInGoogleCloud: (returnHash?: string) => Promise<void>;
   signOutCloud: () => Promise<void>;
   joinOrganization: (input: JoinOrganizationInput) => Promise<void>;
   rotateInviteCode: () => Promise<string>;
@@ -191,6 +194,7 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
     return onSupabaseAuthChange(() => {
       void refreshCloudUser();
       void refresh();
+      restoreOAuthReturnPath();
     });
   }, [storageMode, connectionRevision, isApplyingPublishedConfig]);
 
@@ -355,6 +359,11 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
         await signInWithPassword(config, email, password);
         await refreshCloudUser();
         await refresh();
+      },
+      signInGoogleCloud: async (returnHash) => {
+        const config = getSupabaseConfig();
+        if (!config) throw new Error("Primero conecta tu proyecto Supabase.");
+        await signInWithGoogle(config, returnHash);
       },
       signOutCloud: async () => {
         await signOutSupabase();
