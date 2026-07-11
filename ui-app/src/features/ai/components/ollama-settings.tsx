@@ -70,7 +70,7 @@ export function OllamaSettings() {
       if (!await verifyProxy()) return;
       const provisional = { apiKey: key, remember, defaultModel: selectedModel || current?.defaultModel };
       const items = await listOllamaModels(provisional);
-      if (!items.length) throw new Error("Ollama no devolvió modelos Gemma disponibles para esta cuenta.");
+      if (!items.length) throw new Error("Ollama no devolvió modelos disponibles para esta cuenta.");
       let model = choosePreferredOllamaModel(items, selectedModel || current?.defaultModel);
       try {
         await validateOllamaApiKey(provisional, model);
@@ -175,7 +175,7 @@ export function OllamaSettings() {
           <span className="text-sm font-black text-ink-950">Modelo predeterminado</span>
           <select value={selectedModel} onChange={(event) => saveModel(event.target.value)} disabled={!models.length} className="mt-2 h-11 w-full rounded-xl border border-slate-300 bg-white px-3 text-sm outline-none disabled:bg-slate-100 focus:border-brand-500 focus:ring-4 focus:ring-brand-100">
             {!models.length && <option value="">Prueba la conexión primero</option>}
-            {models.map((model) => <option key={model.model} value={model.model}>{model.name}{model.capabilities.includes("tools") ? " · propuestas" : " · análisis"}</option>)}
+            {models.map((model) => <option key={model.model} value={model.model}>{model.name}{model.model.toLowerCase().startsWith("gemma") ? " · recomendado" : ""}{model.capabilities.includes("tools") ? " · propuestas" : " · análisis"}</option>)}
           </select>
         </label>
         </div>

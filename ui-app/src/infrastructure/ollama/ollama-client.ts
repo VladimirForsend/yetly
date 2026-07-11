@@ -30,18 +30,34 @@ export class OllamaApiError extends Error {
 }
 
 function friendlyError(status: number, fallback: string) {
-  if (status === 401 || status === 403) return "Ollama rechazó la API key o el modelo Gemma seleccionado. Prueba con otro Gemma o crea una clave nueva en Ollama Cloud.";
+  if (status === 401 || status === 403) return "Ollama rechazó la API key o el modelo seleccionado. Prueba otro modelo disponible o crea una clave nueva en Ollama Cloud.";
   if (status === 404) return "El modelo ya no está disponible en Ollama Cloud.";
   if (status === 429) return "Ollama alcanzó el límite de uso. Espera un momento y vuelve a intentar.";
   if (status >= 500) return "Ollama Cloud está temporalmente indisponible. Vuelve a intentar en unos minutos.";
   return fallback || "Ollama rechazó la solicitud.";
 }
 
-const preferredModels = ["gemma4:31b", "gemma3:27b", "gemma3:12b", "gemma3:4b"];
+const preferredModels = [
+  "gemma4:31b-cloud",
+  "gemma3:27b-cloud",
+  "gemma3:12b-cloud",
+  "gemma3:4b-cloud",
+  "gemma4:31b",
+  "gemma3:27b",
+  "gemma3:12b",
+  "gemma3:4b",
+];
+
+function isGemma(model: OllamaModel) {
+  return model.model.toLowerCase().startsWith("gemma");
+}
 
 export function choosePreferredOllamaModel(models: OllamaModel[], requestedModel?: string) {
   if (requestedModel && models.some((item) => item.model === requestedModel)) return requestedModel;
-  return preferredModels.find((model) => models.some((item) => item.model === model)) ?? models[0]?.model ?? "";
+  return preferredModels.find((model) => models.some((item) => item.model === model))
+    ?? models.find(isGemma)?.model
+    ?? models[0]?.model
+    ?? "";
 }
 
 async function request(config: OllamaConfig, path: string, init?: RequestInit, canRefreshSession = true): Promise<Response> {
@@ -97,8 +113,11 @@ export async function listOllamaModels(config: OllamaConfig): Promise<OllamaMode
     model: String(model.model ?? model.name ?? ""),
     parameterSize: model.details?.parameter_size,
     family: model.details?.family,
-    capabilities: [] as string[],
-  })).filter((model) => model.model.toLowerCase().startsWith("gemma"));
+    capabilities: Array.isArray(model.capabilities) ? model.capabilities.map(String) : [] as string[],
+  })).filter((model) => model.model).sort((left, right) => {
+    const familyOrder = Number(isGemma(right)) - Number(isGemma(left));
+    return familyOrder || left.name.localeCompare(right.name, "es");
+  });
   const result = [...base];
   let cursor = 0;
   async function inspectNext() {
