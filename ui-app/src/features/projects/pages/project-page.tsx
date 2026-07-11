@@ -8,6 +8,7 @@ import {
   Columns3,
   Filter,
   GanttChart,
+  Gauge,
   LayoutList,
   MoreHorizontal,
   Network,
@@ -30,6 +31,7 @@ import { QuickAddDialog } from "../../tasks/components/quick-add-dialog";
 import { EditProjectDialog } from "../components/edit-project-dialog";
 import { TaskDrawer } from "../../tasks/components/task-drawer";
 import { WorkflowNodixView } from "../components/workflow-nodix-view";
+import { ProjectLoadsView } from "../components/project-loads-view";
 
 const viewOptions = [
   { id: "overview", label: "Resumen", Icon: CircleDot },
@@ -38,6 +40,7 @@ const viewOptions = [
   { id: "calendar", label: "Calendario", Icon: CalendarDays },
   { id: "timeline", label: "Timeline", Icon: GanttChart },
   { id: "workflow", label: "Workflow Nodix", Icon: Network },
+  { id: "loads", label: "Loads", Icon: Gauge },
   { id: "workload", label: "Carga", Icon: Users },
 ];
 
@@ -523,6 +526,7 @@ export function ProjectPage() {
           onDeleteConnection={deleteWorkflowConnection}
         />
       )}
+      {currentView === "loads" && <ProjectLoadsView tasks={tasks} workload={snapshot.workload} onOpenTask={setSelectedTask} />}
       {currentView === "workload" && <ProjectWorkloadView tasks={tasks} />}
 
       {isMovingTask && <div className="fixed bottom-5 right-5 z-40 rounded-xl bg-ink-950 px-4 py-3 text-sm font-bold text-white shadow-float" role="status">Actualizando tarea…</div>}
