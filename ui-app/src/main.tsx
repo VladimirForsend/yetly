@@ -4,6 +4,9 @@ import { HashRouter } from "react-router-dom";
 import { AppProviders } from "./app/providers/app-providers";
 import { App } from "./app/App";
 import "./styles/index.css";
+import { captureAuthRedirectIntent } from "./infrastructure/supabase/supabase-connection";
+
+captureAuthRedirectIntent();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

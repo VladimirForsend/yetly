@@ -21,10 +21,14 @@ import { useNavigate, useSearchParams } from "react-router-dom";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import {
   dashboardLinks,
+  clearAuthRedirectError,
+  getAuthRedirectError,
+  getGoogleProviderStatus,
   getPublishedSupabaseConfig,
   probeSupabase,
   saveSupabaseConfig,
   projectRefFromUrl,
+  restoreOAuthReturnPath,
   validateSupabaseConfig,
   type SupabaseConnectionConfig,
 } from "../../../infrastructure/supabase/supabase-connection";
@@ -63,6 +67,7 @@ export function OnboardingPage() {
     signUpCloud,
     signInCloud,
     signInGoogleCloud,
+    requestPasswordRecovery,
     createWorkspace,
     joinOrganization,
     exportSnapshot,
@@ -79,6 +84,9 @@ export function OnboardingPage() {
   const [email, setEmail] = useState(cloudUserEmail ?? "");
   const [password, setPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
+  const [showPasswordRecovery, setShowPasswordRecovery] = useState(false);
+  const [recoverySent, setRecoverySent] = useState(false);
+  const [googleStatus, setGoogleStatus] = useState<"checking" | "enabled" | "disabled" | "unknown">("checking");
   const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>("create");
   const [userName, setUserName] = useState("");
   const [organizationName, setOrganizationName] = useState("");
@@ -95,14 +103,23 @@ export function OnboardingPage() {
   const links = useMemo(() => dashboardLinks(url || supabaseConfig?.url || ""), [url, supabaseConfig?.url]);
 
   useEffect(() => {
-    const oauthParams = new URLSearchParams(window.location.search);
-    const oauthError = oauthParams.get("error_description") || oauthParams.get("error");
+    const oauthError = getAuthRedirectError();
     if (!oauthError) return;
     setError(/provider|google|unsupported/i.test(oauthError)
       ? "Google todavía no está habilitado en Supabase. El dueño debe activarlo en Authentication → Providers → Google."
-      : `Google no pudo completar el acceso: ${oauthError}`);
-    window.history.replaceState({}, "", `${window.location.pathname}${window.location.hash}`);
+      : `No pudimos completar el acceso: ${oauthError}`);
+    clearAuthRedirectError();
+    window.history.replaceState({}, "", `${window.location.pathname}#/connect-supabase`);
+    restoreOAuthReturnPath();
   }, []);
+
+  useEffect(() => {
+    if (!supabaseConfig) return setGoogleStatus("unknown");
+    setGoogleStatus("checking");
+    void getGoogleProviderStatus(supabaseConfig).then((result) => {
+      setGoogleStatus(result.checked ? (result.enabled ? "enabled" : "disabled") : "unknown");
+    });
+  }, [supabaseConfig?.url, supabaseConfig?.publishableKey]);
 
   useEffect(() => {
     if (schemaCheckedRef.current || searchParams.get("invite") || !supabaseConfig) return;
@@ -236,6 +253,19 @@ export function OnboardingPage() {
       await signInGoogleCloud(returnHash);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "No pudimos iniciar sesión con Google.");
+    }
+  }
+
+  async function submitPasswordRecovery() {
+    if (!email.trim()) return;
+    setError("");
+    setAuthMessage("");
+    try {
+      await requestPasswordRecovery(email);
+      setRecoverySent(true);
+      setAuthMessage("Si existe una cuenta con ese correo, Supabase enviará un enlace para crear una contraseña nueva.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No pudimos enviar el correo de recuperación.");
     }
   }
 
@@ -526,23 +556,36 @@ export function OnboardingPage() {
                   </div>
                 ) : (
                   <>
-                    <button
+                    {googleStatus !== "disabled" && <button
                       type="button"
                       onClick={() => void submitGoogleAuth()}
-                      disabled={isMutating}
+                      disabled={isMutating || googleStatus === "checking"}
                       className="mt-6 flex min-h-12 w-full max-w-xl items-center justify-center gap-3 rounded-xl border border-slate-300 bg-white px-4 text-sm font-black text-ink-900 shadow-sm transition hover:border-brand-300 hover:bg-brand-50 focus:outline-none focus:ring-4 focus:ring-brand-100 disabled:cursor-not-allowed disabled:opacity-60"
                     >
                       <span className="grid h-6 w-6 place-items-center rounded-full bg-white font-black text-blue-600 shadow-sm" aria-hidden="true">G</span>
-                      Continuar con Google
-                    </button>
+                      {googleStatus === "checking" ? "Comprobando Google…" : "Continuar con Google"}
+                    </button>}
+                    {googleStatus === "disabled" && (
+                      <div className="mt-6 max-w-xl rounded-2xl border border-warning-200 bg-warning-50 p-4 text-sm leading-6 text-warning-900">
+                        <p className="font-black">Google aún no está activado en este Supabase</p>
+                        <p className="mt-1">El dueño debe habilitar Google una sola vez. Mientras tanto puedes entrar con email y contraseña.</p>
+                        <div className="mt-3 flex flex-wrap gap-2"><ExternalGuideLink href={links.authProviders}>Configurar Google</ExternalGuideLink><ExternalGuideLink href={links.authUrlConfig}>Revisar redirects</ExternalGuideLink></div>
+                      </div>
+                    )}
                     <div className="my-5 flex max-w-xl items-center gap-3 text-xs font-bold uppercase tracking-wider text-ink-400">
                       <span className="h-px flex-1 bg-slate-200" /> o usa email y contraseña <span className="h-px flex-1 bg-slate-200" />
                     </div>
                     <div className="mt-6 inline-flex rounded-xl bg-slate-100 p-1" role="tablist" aria-label="Acceso Supabase">
-                      <button type="button" role="tab" aria-selected={authMode === "signup"} onClick={() => setAuthMode("signup")} className={`rounded-lg px-4 py-2 text-sm font-black ${authMode === "signup" ? "bg-white text-ink-950 shadow-sm" : "text-ink-600"}`}>Crear cuenta</button>
-                      <button type="button" role="tab" aria-selected={authMode === "signin"} onClick={() => setAuthMode("signin")} className={`rounded-lg px-4 py-2 text-sm font-black ${authMode === "signin" ? "bg-white text-ink-950 shadow-sm" : "text-ink-600"}`}>Iniciar sesión</button>
+                      <button type="button" role="tab" aria-selected={authMode === "signup" && !showPasswordRecovery} onClick={() => { setAuthMode("signup"); setShowPasswordRecovery(false); setRecoverySent(false); }} className={`rounded-lg px-4 py-2 text-sm font-black ${authMode === "signup" && !showPasswordRecovery ? "bg-white text-ink-950 shadow-sm" : "text-ink-600"}`}>Crear cuenta</button>
+                      <button type="button" role="tab" aria-selected={authMode === "signin" && !showPasswordRecovery} onClick={() => { setAuthMode("signin"); setShowPasswordRecovery(false); setRecoverySent(false); }} className={`rounded-lg px-4 py-2 text-sm font-black ${authMode === "signin" && !showPasswordRecovery ? "bg-white text-ink-950 shadow-sm" : "text-ink-600"}`}>Iniciar sesión</button>
                     </div>
-                    <form onSubmit={(event) => { event.preventDefault(); void submitAuth(); }} className="mt-6 max-w-xl space-y-5">
+                    {showPasswordRecovery ? (
+                      <form onSubmit={(event) => { event.preventDefault(); void submitPasswordRecovery(); }} className="mt-6 max-w-xl space-y-5">
+                        <div><h2 className="text-lg font-black text-ink-950">Recuperar contraseña</h2><p className="mt-1 text-sm leading-6 text-ink-600">Te enviaremos un enlace seguro para crear una contraseña nueva.</p></div>
+                        <label className="block"><span className="text-sm font-black text-ink-900">Email de tu cuenta</span><input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-100" autoComplete="email" /></label>
+                        <div className="flex flex-wrap gap-3"><Button type="submit" disabled={isMutating || recoverySent || email.trim().length < 3}>Enviar enlace</Button><Button type="button" variant="secondary" onClick={() => { setShowPasswordRecovery(false); setRecoverySent(false); }}>Volver al login</Button></div>
+                      </form>
+                    ) : <form onSubmit={(event) => { event.preventDefault(); void submitAuth(); }} className="mt-6 max-w-xl space-y-5">
                       <label className="block">
                         <span className="text-sm font-black text-ink-900">Email</span>
                         <input type="email" required value={email} onChange={(event) => setEmail(event.target.value)} className="mt-2 h-12 w-full rounded-xl border border-slate-300 px-4 text-sm outline-none focus:border-brand-500 focus:ring-4 focus:ring-brand-100" autoComplete="email" />
@@ -555,7 +598,8 @@ export function OnboardingPage() {
                         {authMode === "signup" ? <UserPlus className="h-4 w-4" aria-hidden="true" /> : <LogIn className="h-4 w-4" aria-hidden="true" />}
                         {authMode === "signup" ? "Crear cuenta" : "Entrar"}
                       </Button>
-                    </form>
+                      {authMode === "signin" && <button type="button" onClick={() => { setShowPasswordRecovery(true); setAuthMessage(""); setError(""); }} className="block text-sm font-black text-brand-700 hover:text-brand-800 hover:underline">¿Olvidaste tu contraseña?</button>}
+                    </form>}
                   </>
                 )}
               </div>
@@ -572,11 +616,12 @@ export function OnboardingPage() {
                   <ExternalGuideLink href={links.docsAuth}>Documentación oficial de Auth</ExternalGuideLink>
                 </div>
                 <p className="mt-5 text-xs leading-5 text-ink-500">
-                  Para despliegues públicos, configura en Supabase la URL de tu sitio Yetly como Site URL y redirect permitida.
+                  Para que Google y recuperación de contraseña vuelvan correctamente, usa esta URL como Site URL y Redirect URL en Supabase:
                 </p>
+                <code className="mt-2 block break-all rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-ink-700">{`${window.location.origin}${window.location.pathname}`}</code>
                 <div className="mt-5 rounded-2xl border border-blue-200 bg-blue-50 p-4">
                   <p className="text-sm font-black text-blue-900">Activación única para el dueño</p>
-                  <p className="mt-1 text-xs leading-5 text-blue-800">En Auth Providers habilita Google y guarda el Client ID y Client Secret creados en Google Cloud. En Google usa como callback:</p>
+                  <p className="mt-1 text-xs leading-5 text-blue-800">En Google Cloud agrega <strong>{window.location.origin}</strong> como origen JavaScript. En Auth Providers habilita Google y guarda el Client ID y Client Secret. En Google usa como callback:</p>
                   <code className="mt-2 block break-all rounded-lg bg-white px-3 py-2 text-[11px] font-bold text-blue-900">{supabaseConfig?.url ? `${supabaseConfig.url}/auth/v1/callback` : "https://TU-PROYECTO.supabase.co/auth/v1/callback"}</code>
                 </div>
               </aside>

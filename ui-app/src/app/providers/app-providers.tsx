@@ -15,18 +15,22 @@ import type {
   WorkspaceSnapshot,
 } from "../../application/ports/workspace-port";
 import {
+  activatePasswordRecoveryIntent,
   getStorageMode,
   getPublishedSupabaseConfig,
   getSupabaseConfig,
   getSupabaseUser,
+  isPasswordRecoveryPending,
   onSupabaseAuthChange,
   probeSupabase,
   saveSupabaseConfig,
+  requestPasswordRecovery,
   signInWithGoogle,
   signInWithPassword,
   signOutSupabase,
   signUpWithPassword,
   restoreOAuthReturnPath,
+  updateSupabasePassword,
   useLocalMode,
   type StorageMode,
   type SupabaseConnectionConfig,
@@ -61,6 +65,8 @@ interface WorkspaceContextValue {
   signUpCloud: (email: string, password: string) => Promise<{ needsEmailConfirmation: boolean }>;
   signInCloud: (email: string, password: string) => Promise<void>;
   signInGoogleCloud: (returnHash?: string) => Promise<void>;
+  requestPasswordRecovery: (email: string) => Promise<void>;
+  updateCloudPassword: (password: string) => Promise<void>;
   signOutCloud: () => Promise<void>;
   joinOrganization: (input: JoinOrganizationInput) => Promise<void>;
   rotateInviteCode: () => Promise<string>;
@@ -195,10 +201,12 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
     if (isApplyingPublishedConfig) return;
     void refreshCloudUser();
     if (storageMode !== "supabase") return;
-    return onSupabaseAuthChange(() => {
+    return onSupabaseAuthChange((event) => {
       void refreshCloudUser();
       void refresh();
-      restoreOAuthReturnPath();
+      if (event === "PASSWORD_RECOVERY") activatePasswordRecoveryIntent();
+      if (event !== "SIGNED_OUT" && isPasswordRecoveryPending()) window.location.hash = "#/reset-password";
+      else restoreOAuthReturnPath();
     });
   }, [storageMode, connectionRevision, isApplyingPublishedConfig]);
 
@@ -368,6 +376,17 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
         const config = getSupabaseConfig();
         if (!config) throw new Error("Primero conecta tu proyecto Supabase.");
         await signInWithGoogle(config, returnHash);
+      },
+      requestPasswordRecovery: async (email) => {
+        const config = getSupabaseConfig();
+        if (!config) throw new Error("Primero conecta tu proyecto Supabase.");
+        await requestPasswordRecovery(config, email);
+      },
+      updateCloudPassword: async (password) => {
+        const config = getSupabaseConfig();
+        if (!config) throw new Error("Primero conecta tu proyecto Supabase.");
+        await updateSupabasePassword(config, password);
+        await refreshCloudUser();
       },
       signOutCloud: async () => {
         await signOutSupabase();

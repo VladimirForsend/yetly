@@ -2,6 +2,7 @@ import { lazy, Suspense } from "react";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./shell/app-shell";
 import { useWorkspace } from "./providers/app-providers";
+import { isPasswordRecoveryPending } from "../infrastructure/supabase/supabase-connection";
 
 const DashboardPage = lazy(() => import("../features/dashboard/pages/dashboard-page").then((module) => ({ default: module.DashboardPage })));
 const AiPage = lazy(() => import("../features/ai/pages/ai-page").then((module) => ({ default: module.AiPage })));
@@ -18,6 +19,7 @@ const TeamsPage = lazy(() => import("../features/teams/pages/teams-page").then((
 const TimesheetsPage = lazy(() => import("../features/time/pages/timesheets-page").then((module) => ({ default: module.TimesheetsPage })));
 const WorkloadPage = lazy(() => import("../features/workload/pages/workload-page").then((module) => ({ default: module.WorkloadPage })));
 const NotFoundPage = lazy(() => import("../features/errors/pages/not-found-page").then((module) => ({ default: module.NotFoundPage })));
+const ResetPasswordPage = lazy(() => import("../features/auth/pages/reset-password-page").then((module) => ({ default: module.ResetPasswordPage })));
 
 function RouteLoading() {
   return (
@@ -29,6 +31,10 @@ function RouteLoading() {
 
 export function App() {
   const { isLoading, isError, error, needsOnboarding } = useWorkspace();
+
+  if (isPasswordRecoveryPending() || window.location.hash.startsWith("#/reset-password")) {
+    return <Suspense fallback={<main className="min-h-screen"><RouteLoading /></main>}><ResetPasswordPage /></Suspense>;
+  }
 
   if (isLoading) {
     return (
@@ -73,6 +79,7 @@ export function App() {
           <Route path="/reports" element={<ReportsPage />} />
           <Route path="/faq" element={<FaqPage />} />
           <Route path="/connect-supabase" element={<OnboardingPage />} />
+          <Route path="/reset-password" element={<ResetPasswordPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="*" element={<NotFoundPage />} />
         </Routes>

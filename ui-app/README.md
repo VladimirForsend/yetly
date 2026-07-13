@@ -55,6 +55,10 @@ npx supabase functions deploy ollama-proxy --project-ref TU_PROJECT_REF
 
 Después, cada usuario configura su propia API key desde `Configuración → Ollama Cloud`.
 
+## Acceso y recuperación
+
+Yetly usa Supabase Auth con PKCE para email, recuperación de contraseña y Google. La URL pública exacta de GitHub Pages debe estar configurada como `Site URL` y `Redirect URL` en Supabase. Google requiere además habilitar el provider con su Client ID/Secret y registrar `https://PROJECT_REF.supabase.co/auth/v1/callback` en Google Cloud; Yetly comprueba el estado del provider antes de mostrar el botón.
+
 ## GitHub Pages
 
 El proyecto usa `HashRouter` y `base: "./"`.

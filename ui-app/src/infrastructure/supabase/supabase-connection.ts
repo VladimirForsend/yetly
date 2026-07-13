@@ -1,4 +1,4 @@
-import { createClient, type SupabaseClient, type User } from "@supabase/supabase-js";
+import { createClient, type AuthChangeEvent, type SupabaseClient, type User } from "@supabase/supabase-js";
 
 export type StorageMode = "local" | "supabase";
 
@@ -26,6 +26,9 @@ export const REQUIRED_YETLY_SCHEMA_VERSION = 19;
 
 const CONNECTION_KEY = "yetly:v1:connection";
 const OAUTH_RETURN_KEY = "yetly:v1:oauth-return";
+const PASSWORD_RECOVERY_KEY = "yetly:v1:password-recovery";
+const PASSWORD_RECOVERY_RETURN_KEY = "yetly:v1:password-recovery-return";
+const AUTH_REDIRECT_ERROR_KEY = "yetly:v1:auth-redirect-error";
 const LEGACY_LOCAL_MODE = { mode: "local" as const };
 
 let cachedClient: SupabaseClient | null = null;
@@ -198,6 +201,7 @@ export function getSupabaseClient(config = getSupabaseConfig()): SupabaseClient 
       persistSession: true,
       autoRefreshToken: true,
       detectSessionInUrl: true,
+      flowType: "pkce",
       storageKey: `yetly:supabase-auth:${ref}`,
     },
     realtime: {
@@ -284,12 +288,96 @@ export async function signInWithGoogle(config: SupabaseConnectionConfig, returnH
   const redirectTo = `${window.location.origin}${window.location.pathname}`;
   const { error } = await client.auth.signInWithOAuth({
     provider: "google",
-    options: { redirectTo },
+    options: {
+      redirectTo,
+      queryParams: { prompt: "select_account" },
+    },
   });
   if (error) {
     window.sessionStorage.removeItem(OAUTH_RETURN_KEY);
     throw new Error(error.message);
   }
+}
+
+export async function getGoogleProviderStatus(config: SupabaseConnectionConfig) {
+  const normalized = validateSupabaseConfig(config);
+  try {
+    const response = await fetch(`${normalized.url}/auth/v1/settings`, {
+      headers: { apikey: normalized.publishableKey },
+      cache: "no-store",
+    });
+    if (!response.ok) return { enabled: false, checked: false };
+    const settings = await response.json() as { external?: Record<string, boolean>; external_google_enabled?: boolean };
+    return { enabled: Boolean(settings.external?.google ?? settings.external_google_enabled), checked: true };
+  } catch {
+    return { enabled: false, checked: false };
+  }
+}
+
+export async function requestPasswordRecovery(config: SupabaseConnectionConfig, email: string) {
+  const client = getSupabaseClient(config);
+  window.sessionStorage.setItem(PASSWORD_RECOVERY_KEY, "requested");
+  if (window.location.hash.startsWith("#/connect-supabase")) window.sessionStorage.setItem(PASSWORD_RECOVERY_RETURN_KEY, window.location.hash);
+  const redirectTo = `${window.location.origin}${window.location.pathname}`;
+  const { error } = await client.auth.resetPasswordForEmail(email.trim(), { redirectTo });
+  if (error) {
+    window.sessionStorage.removeItem(PASSWORD_RECOVERY_KEY);
+    throw new Error(error.message);
+  }
+}
+
+export async function updateSupabasePassword(config: SupabaseConnectionConfig, password: string) {
+  const client = getSupabaseClient(config);
+  const { data, error } = await client.auth.updateUser({ password });
+  if (error) throw new Error(error.message);
+  window.sessionStorage.removeItem(PASSWORD_RECOVERY_KEY);
+  return data.user;
+}
+
+export function captureAuthRedirectIntent() {
+  const hashParams = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  const queryParams = new URLSearchParams(window.location.search);
+  const requestedHere = window.sessionStorage.getItem(PASSWORD_RECOVERY_KEY) === "requested";
+  const redirectError = queryParams.get("error_description") || queryParams.get("error") || hashParams.get("error_description") || hashParams.get("error");
+  if (hashParams.get("type") === "recovery" || queryParams.get("type") === "recovery" || (requestedHere && (queryParams.has("code") || Boolean(redirectError)))) {
+    window.sessionStorage.setItem(PASSWORD_RECOVERY_KEY, "active");
+    return;
+  }
+  if (redirectError) {
+    window.sessionStorage.setItem(AUTH_REDIRECT_ERROR_KEY, redirectError);
+    const returnHash = window.sessionStorage.getItem(OAUTH_RETURN_KEY);
+    if (returnHash) window.sessionStorage.removeItem(OAUTH_RETURN_KEY);
+    window.history.replaceState({}, "", `${window.location.pathname}${returnHash || "#/connect-supabase"}`);
+  }
+}
+
+export function isPasswordRecoveryPending() {
+  return window.sessionStorage.getItem(PASSWORD_RECOVERY_KEY) === "active";
+}
+
+export function activatePasswordRecoveryIntent() {
+  window.sessionStorage.setItem(PASSWORD_RECOVERY_KEY, "active");
+}
+
+export function clearPasswordRecoveryIntent() {
+  window.sessionStorage.removeItem(PASSWORD_RECOVERY_KEY);
+  window.sessionStorage.removeItem(PASSWORD_RECOVERY_RETURN_KEY);
+}
+
+export function consumePasswordRecoveryReturnPath() {
+  const path = window.sessionStorage.getItem(PASSWORD_RECOVERY_RETURN_KEY);
+  window.sessionStorage.removeItem(PASSWORD_RECOVERY_RETURN_KEY);
+  return path?.startsWith("#/") ? path.slice(1) : undefined;
+}
+
+export function getAuthRedirectError() {
+  const query = new URLSearchParams(window.location.search);
+  const hash = new URLSearchParams(window.location.hash.replace(/^#/, ""));
+  return query.get("error_description") || query.get("error") || hash.get("error_description") || hash.get("error") || window.sessionStorage.getItem(AUTH_REDIRECT_ERROR_KEY);
+}
+
+export function clearAuthRedirectError() {
+  window.sessionStorage.removeItem(AUTH_REDIRECT_ERROR_KEY);
 }
 
 export function restoreOAuthReturnPath() {
@@ -314,10 +402,10 @@ export async function getSupabaseUser(config = getSupabaseConfig()): Promise<Use
   return data.user;
 }
 
-export function onSupabaseAuthChange(callback: () => void) {
+export function onSupabaseAuthChange(callback: (event: AuthChangeEvent) => void) {
   const config = getSupabaseConfig();
   if (!config) return () => {};
   const client = getSupabaseClient(config);
-  const { data } = client.auth.onAuthStateChange(() => callback());
+  const { data } = client.auth.onAuthStateChange((event) => callback(event));
   return () => data.subscription.unsubscribe();
 }

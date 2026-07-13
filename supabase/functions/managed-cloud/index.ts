@@ -277,8 +277,8 @@ async function advanceJob(row: Record<string, unknown>, connection: Record<strin
     return updateJob(String(row.id), { phase: "auth", progress: 48, message: "Base y seguridad listas; configurando acceso" });
   }
   if (phase === "auth") {
-    const siteUrl = String(payload.siteUrl ?? "");
-    await management(connection, `/projects/${projectRef}/config/auth`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ site_url: siteUrl, uri_allow_list: `${siteUrl},${siteUrl}/**`, disable_signup: false, external_google_enabled: false }) });
+    const siteUrl = `${String(payload.siteUrl ?? "").replace(/\/+$/, "")}/`;
+    await management(connection, `/projects/${projectRef}/config/auth`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ site_url: siteUrl, uri_allow_list: `${siteUrl},${siteUrl}**`, disable_signup: false }) });
     return updateJob(String(row.id), { phase: "keys", progress: 58, message: "Acceso configurado; obteniendo clave pública" });
   }
   if (phase === "keys") {
