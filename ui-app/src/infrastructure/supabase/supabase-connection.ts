@@ -22,7 +22,7 @@ export interface SupabaseProbeResult {
   message: string;
 }
 
-export const REQUIRED_YETLY_SCHEMA_VERSION = 18;
+export const REQUIRED_YETLY_SCHEMA_VERSION = 19;
 
 const CONNECTION_KEY = "yetly:v1:connection";
 const OAUTH_RETURN_KEY = "yetly:v1:oauth-return";

@@ -121,6 +121,7 @@ export interface ChatMessage {
   body: string;
   author: PersonSummary;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface WorkflowNodePosition {
@@ -315,6 +316,10 @@ export interface WorkspacePort {
   createChatChannel(name: string): Promise<string>;
   startDirectChat(userId: string): Promise<string>;
   sendChatMessage(conversationId: string, body: string): Promise<void>;
+  updateChatMessage(messageId: string, body: string): Promise<void>;
+  deleteChatMessage(messageId: string): Promise<void>;
+  updateChatChannel(conversationId: string, name: string): Promise<void>;
+  deleteChatChannel(conversationId: string): Promise<void>;
   saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void>;
   createWorkflowConnection(projectId: string, sourceTaskId: string, targetTaskId: string): Promise<void>;
   deleteWorkflowConnection(connectionId: string): Promise<void>;

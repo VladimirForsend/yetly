@@ -88,6 +88,10 @@ interface WorkspaceContextValue {
   createChatChannel: (name: string) => Promise<void>;
   startDirectChat: (userId: string) => Promise<string>;
   sendChatMessage: (conversationId: string, body: string) => Promise<void>;
+  updateChatMessage: (messageId: string, body: string) => Promise<void>;
+  deleteChatMessage: (messageId: string) => Promise<void>;
+  updateChatChannel: (conversationId: string, name: string) => Promise<void>;
+  deleteChatChannel: (conversationId: string) => Promise<void>;
   saveWorkflowNodePosition: (projectId: string, taskId: string, x: number, y: number) => Promise<void>;
   createWorkflowConnection: (projectId: string, sourceTaskId: string, targetTaskId: string) => Promise<void>;
   deleteWorkflowConnection: (connectionId: string) => Promise<void>;
@@ -470,6 +474,63 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
             ...current,
             chatMessages: current.chatMessages.filter((message) => message.id !== temporaryId),
           }));
+          throw cause;
+        }
+      },
+      updateChatMessage: async (messageId, body) => {
+        const previous = client.getQueryData<WorkspaceSnapshot>(workspaceQueryKey);
+        patchWorkspace((current) => ({
+          ...current,
+          chatMessages: current.chatMessages.map((message) => message.id === messageId
+            ? { ...message, body: body.trim(), updatedAt: new Date().toISOString() }
+            : message),
+        }));
+        try {
+          await workspacePort.updateChatMessage(messageId, body);
+          void refresh();
+        } catch (cause) {
+          client.setQueryData(workspaceQueryKey, previous);
+          throw cause;
+        }
+      },
+      deleteChatMessage: async (messageId) => {
+        const previous = client.getQueryData<WorkspaceSnapshot>(workspaceQueryKey);
+        patchWorkspace((current) => ({ ...current, chatMessages: current.chatMessages.filter((message) => message.id !== messageId) }));
+        try {
+          await workspacePort.deleteChatMessage(messageId);
+          void refresh();
+        } catch (cause) {
+          client.setQueryData(workspaceQueryKey, previous);
+          throw cause;
+        }
+      },
+      updateChatChannel: async (conversationId, name) => {
+        const previous = client.getQueryData<WorkspaceSnapshot>(workspaceQueryKey);
+        const normalized = name.trim().replace(/^#/, "");
+        patchWorkspace((current) => ({
+          ...current,
+          chatConversations: current.chatConversations.map((conversation) => conversation.id === conversationId ? { ...conversation, name: normalized } : conversation),
+        }));
+        try {
+          await workspacePort.updateChatChannel(conversationId, normalized);
+          void refresh();
+        } catch (cause) {
+          client.setQueryData(workspaceQueryKey, previous);
+          throw cause;
+        }
+      },
+      deleteChatChannel: async (conversationId) => {
+        const previous = client.getQueryData<WorkspaceSnapshot>(workspaceQueryKey);
+        patchWorkspace((current) => ({
+          ...current,
+          chatConversations: current.chatConversations.filter((conversation) => conversation.id !== conversationId),
+          chatMessages: current.chatMessages.filter((message) => message.conversationId !== conversationId),
+        }));
+        try {
+          await workspacePort.deleteChatChannel(conversationId);
+          void refresh();
+        } catch (cause) {
+          client.setQueryData(workspaceQueryKey, previous);
           throw cause;
         }
       },

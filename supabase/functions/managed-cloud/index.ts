@@ -3,7 +3,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 type Json = Record<string, unknown>;
 
 const MANAGEMENT_API = "https://api.supabase.com/v1";
-const REQUIRED_SCHEMA_VERSION = 18;
+const REQUIRED_SCHEMA_VERSION = 19;
 const PHASES = ["project", "availability", "database", "auth", "keys", "storage-realtime", "edge-function", "verification"] as const;
 const encoder = new TextEncoder();
 
@@ -269,7 +269,7 @@ async function advanceJob(row: Record<string, unknown>, connection: Record<strin
   if (phase === "availability") {
     const project = await management(connection, `/projects/${projectRef}`) as Record<string, unknown>;
     if (!String(project.status).includes("HEALTHY")) return updateJob(String(row.id), { status: "running", progress: 12, message: `Supabase está preparando la base (${project.status ?? "en curso"})` });
-    return updateJob(String(row.id), { phase: "database", progress: 20, message: "Base disponible; instalando esquema Yetly v18" });
+    return updateJob(String(row.id), { phase: "database", progress: 20, message: "Base disponible; instalando esquema Yetly v19" });
   }
   if (phase === "database") {
     const schema = await verifiedSource("YETLY_SCHEMA_URL", "YETLY_SCHEMA_SHA256", "https://raw.githubusercontent.com/vladimirforsend/yetly/main/ui-app/supabase/yetly-schema.sql");

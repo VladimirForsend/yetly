@@ -86,6 +86,10 @@ export class HybridWorkspaceAdapter implements WorkspacePort {
   createChatChannel(name: string) { return this.active().createChatChannel(name); }
   startDirectChat(userId: string) { return this.active().startDirectChat(userId); }
   sendChatMessage(conversationId: string, body: string) { return this.active().sendChatMessage(conversationId, body); }
+  updateChatMessage(messageId: string, body: string) { return this.active().updateChatMessage(messageId, body); }
+  deleteChatMessage(messageId: string) { return this.active().deleteChatMessage(messageId); }
+  updateChatChannel(conversationId: string, name: string) { return this.active().updateChatChannel(conversationId, name); }
+  deleteChatChannel(conversationId: string) { return this.active().deleteChatChannel(conversationId); }
   saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number) { return this.active().saveWorkflowNodePosition(projectId, taskId, x, y); }
   createWorkflowConnection(projectId: string, sourceTaskId: string, targetTaskId: string) { return this.active().createWorkflowConnection(projectId, sourceTaskId, targetTaskId); }
   deleteWorkflowConnection(connectionId: string) { return this.active().deleteWorkflowConnection(connectionId); }

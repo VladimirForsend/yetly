@@ -22,4 +22,4 @@ Los colaboradores no repiten este paso: la función se instala una sola vez en e
 
 ## Instalación automática
 
-`managed-cloud` es la función del proyecto central que implementa OAuth con Supabase, crea o selecciona el proyecto del dueño y provisiona esquema v18, Auth, RLS, Storage, Realtime y `ollama-proxy`. Su preparación y secretos están documentados en `supabase/control-plane/README.md`.
+`managed-cloud` es la función del proyecto central que implementa OAuth con Supabase, crea o selecciona el proyecto del dueño y provisiona esquema v19, Auth, RLS, Storage, Realtime y `ollama-proxy`. Su preparación y secretos están documentados en `supabase/control-plane/README.md`.

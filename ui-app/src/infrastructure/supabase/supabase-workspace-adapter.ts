@@ -485,6 +485,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       body: message.body,
       author: profiles.get(message.author_id) ?? currentUser,
       createdAt: message.created_at,
+      updatedAt: message.updated_at && message.updated_at !== message.created_at ? message.updated_at : undefined,
     }));
     const workflowNodePositions: WorkflowNodePosition[] = workflowPositionRows.map((position) => ({
       projectId: position.project_id,
@@ -952,7 +953,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     if (error) {
       const detail = `${error.code ?? ""} ${error.message ?? ""}`.toLowerCase();
       if (detail.includes("pgrst202") || detail.includes("yetly_start_direct_chat")) {
-        throw new Error("Tu Supabase necesita el esquema Yetly v17. Copia y ejecuta nuevamente el instalador SQL completo desde Conectar Supabase.");
+        throw new Error("Tu Supabase necesita el esquema Yetly v19. Copia y ejecuta nuevamente el instalador SQL completo desde Conectar Supabase.");
       }
       throw asError(error, "No pudimos crear el mensaje directo.");
     }
@@ -970,6 +971,36 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       body: body.trim(),
     });
     if (error) throw asError(error, "No pudimos enviar el mensaje.");
+  }
+
+  async updateChatMessage(messageId: string, body: string): Promise<void> {
+    assertText(body, "El mensaje", 1);
+    const { data, error } = await this.client.from("chat_messages").update({
+      body: body.trim(),
+      updated_at: new Date().toISOString(),
+    }).eq("id", messageId).select("id").maybeSingle();
+    if (error) throw asError(error, "No pudimos editar el mensaje.");
+    if (!data) throw new Error("Solo el autor puede editar este mensaje.");
+  }
+
+  async deleteChatMessage(messageId: string): Promise<void> {
+    const { data, error } = await this.client.from("chat_messages").delete().eq("id", messageId).select("id").maybeSingle();
+    if (error) throw asError(error, "No pudimos eliminar el mensaje.");
+    if (!data) throw new Error("No tienes permiso para eliminar este mensaje.");
+  }
+
+  async updateChatChannel(conversationId: string, nameInput: string): Promise<void> {
+    assertText(nameInput, "El nombre del canal");
+    const name = nameInput.trim().replace(/^#/, "");
+    const { data, error } = await this.client.from("chat_conversations").update({ name }).eq("id", conversationId).eq("type", "channel").select("id").maybeSingle();
+    if (error) throw asError(error, "No pudimos editar el canal.");
+    if (!data) throw new Error("Solo el creador o un administrador puede editar este canal.");
+  }
+
+  async deleteChatChannel(conversationId: string): Promise<void> {
+    const { data, error } = await this.client.from("chat_conversations").delete().eq("id", conversationId).eq("type", "channel").select("id").maybeSingle();
+    if (error) throw asError(error, "No pudimos eliminar el canal.");
+    if (!data) throw new Error("Solo el creador o un administrador puede eliminar este canal.");
   }
 
   async saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void> {

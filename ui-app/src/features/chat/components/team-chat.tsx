@@ -1,4 +1,4 @@
-import { Hash, MessageCircle, Plus, Send, UserRound, Users } from "lucide-react";
+import { Check, Hash, MessageCircle, Pencil, Plus, Send, Trash2, UserRound, Users, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ChatConversation } from "../../../application/ports/workspace-port";
 import { useWorkspace } from "../../../app/providers/app-providers";
@@ -16,13 +16,21 @@ function conversationIcon(conversation: ChatConversation) {
 }
 
 export function TeamChat() {
-  const { snapshot, createChatChannel, startDirectChat, sendChatMessage } = useWorkspace();
+  const {
+    snapshot, createChatChannel, startDirectChat, sendChatMessage,
+    updateChatMessage, deleteChatMessage, updateChatChannel, deleteChatChannel,
+  } = useWorkspace();
   const [activeId, setActiveId] = useState<string>();
   const [body, setBody] = useState("");
   const [channelName, setChannelName] = useState("");
   const [directUserId, setDirectUserId] = useState("");
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
+  const [busyAction, setBusyAction] = useState(false);
+  const [editingMessageId, setEditingMessageId] = useState<string>();
+  const [editingMessageBody, setEditingMessageBody] = useState("");
+  const [editingChannel, setEditingChannel] = useState(false);
+  const [channelDraft, setChannelDraft] = useState("");
   const [online, setOnline] = useState(1);
   const messagesEnd = useRef<HTMLDivElement>(null);
 
@@ -111,6 +119,67 @@ export function TeamChat() {
     }
   }
 
+  async function saveMessageEdit() {
+    if (!editingMessageId || !editingMessageBody.trim()) return;
+    setBusyAction(true);
+    setError("");
+    try {
+      await updateChatMessage(editingMessageId, editingMessageBody);
+      setEditingMessageId(undefined);
+      setEditingMessageBody("");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No pudimos editar el mensaje.");
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  async function removeMessage(messageId: string) {
+    if (!window.confirm("¿Eliminar este mensaje? Esta acción no se puede deshacer.")) return;
+    setBusyAction(true);
+    setError("");
+    try {
+      await deleteChatMessage(messageId);
+      if (editingMessageId === messageId) setEditingMessageId(undefined);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No pudimos eliminar el mensaje.");
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  async function saveChannelEdit() {
+    if (!activeConversation || !channelDraft.trim()) return;
+    setBusyAction(true);
+    setError("");
+    try {
+      await updateChatChannel(activeConversation.id, channelDraft);
+      setEditingChannel(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No pudimos editar el canal.");
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  async function removeChannel() {
+    if (!activeConversation || !window.confirm(`¿Eliminar #${activeConversation.name} y todos sus mensajes? Esta acción no se puede deshacer.`)) return;
+    setBusyAction(true);
+    setError("");
+    try {
+      await deleteChatChannel(activeConversation.id);
+      setEditingChannel(false);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No pudimos eliminar el canal.");
+    } finally {
+      setBusyAction(false);
+    }
+  }
+
+  const isOrganizationAdmin = snapshot.activeOrganization.memberRole === "owner" || snapshot.activeOrganization.memberRole === "admin";
+  const canManageActiveChannel = activeConversation?.type === "channel"
+    && (activeConversation.createdBy === snapshot.currentUser.id || isOrganizationAdmin);
+
   return (
         <section className="flex min-h-[calc(100vh-15rem)] overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-card" aria-label="Canales y mensajes del equipo">
           <aside className="hidden w-72 flex-col border-r border-slate-200 bg-ink-950 text-white md:flex">
@@ -156,9 +225,21 @@ export function TeamChat() {
             <header className="flex items-center gap-3 border-b border-slate-200 bg-white px-4 py-3">
               <span className="grid h-10 w-10 place-items-center rounded-xl bg-brand-50 text-brand-700">{activeConversation ? conversationIcon(activeConversation) : <MessageCircle className="h-5 w-5" />}</span>
               <div className="min-w-0 flex-1">
-                <p className="truncate text-sm font-black text-ink-950">{activeConversation ? conversationLabel(activeConversation) : "Chat"}</p>
+                {editingChannel ? (
+                  <div className="flex max-w-md items-center gap-2">
+                    <input value={channelDraft} onChange={(event) => setChannelDraft(event.target.value)} onKeyDown={(event) => { if (event.key === "Enter") void saveChannelEdit(); if (event.key === "Escape") setEditingChannel(false); }} autoFocus className="h-9 min-w-0 flex-1 rounded-lg border border-brand-300 px-3 text-sm font-black outline-none focus:ring-4 focus:ring-brand-100" />
+                    <button type="button" onClick={() => void saveChannelEdit()} disabled={busyAction || !channelDraft.trim()} className="grid h-9 w-9 place-items-center rounded-lg bg-brand-600 text-white disabled:opacity-50" aria-label="Guardar nombre"><Check className="h-4 w-4" /></button>
+                    <button type="button" onClick={() => setEditingChannel(false)} className="grid h-9 w-9 place-items-center rounded-lg bg-slate-100 text-ink-600" aria-label="Cancelar"><X className="h-4 w-4" /></button>
+                  </div>
+                ) : <p className="truncate text-sm font-black text-ink-950">{activeConversation ? conversationLabel(activeConversation) : "Chat"}</p>}
                 <p className="truncate text-xs font-bold text-ink-500">{activeConversation?.type === "direct" ? "Mensaje directo" : "Canal de texto"}</p>
               </div>
+              {canManageActiveChannel && !editingChannel && (
+                <div className="flex items-center gap-1">
+                  <button type="button" onClick={() => { setChannelDraft(activeConversation.name); setEditingChannel(true); }} className="grid h-9 w-9 place-items-center rounded-lg text-ink-500 hover:bg-slate-100 hover:text-brand-700" aria-label="Editar canal" title="Editar canal"><Pencil className="h-4 w-4" /></button>
+                  <button type="button" onClick={() => void removeChannel()} disabled={busyAction} className="grid h-9 w-9 place-items-center rounded-lg text-ink-500 hover:bg-danger-50 hover:text-danger-700 disabled:opacity-50" aria-label="Eliminar canal" title="Eliminar canal"><Trash2 className="h-4 w-4" /></button>
+                </div>
+              )}
             </header>
 
             <div className="space-y-3 border-b border-slate-200 bg-slate-50 p-3 md:hidden">
@@ -188,7 +269,33 @@ export function TeamChat() {
             <div className="flex-1 space-y-3 overflow-y-auto bg-slate-50 p-4">
               {messages.length ? messages.map((message) => {
                 const mine = message.author.id === snapshot.currentUser.id;
-                return <article key={message.id} className={`max-w-[88%] rounded-2xl px-3 py-2.5 ${mine ? "ml-auto bg-brand-600 text-white" : "bg-white text-ink-900 shadow-sm"}`}><p className="text-[11px] font-black opacity-70">{message.author.name}</p><p className="mt-1 whitespace-pre-wrap text-sm leading-5">{message.body}</p><time className="mt-1 block text-right text-[10px] opacity-60">{new Date(message.createdAt).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}</time></article>;
+                const pending = message.id.startsWith("pending-");
+                const canModerate = activeConversation?.type !== "direct" && (activeConversation?.createdBy === snapshot.currentUser.id || isOrganizationAdmin);
+                const canDelete = !pending && (mine || canModerate);
+                const isEditing = editingMessageId === message.id;
+                return (
+                  <article key={message.id} className={`group relative max-w-[88%] rounded-2xl px-3 py-2.5 ${mine ? "ml-auto bg-brand-600 text-white" : "bg-white text-ink-900 shadow-sm"}`}>
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="text-[11px] font-black opacity-70">{message.author.name}</p>
+                      {(mine || canDelete) && !isEditing && (
+                        <div className={`flex items-center gap-0.5 transition md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100 ${mine ? "text-white" : "text-ink-500"}`}>
+                          {mine && !pending && <button type="button" onClick={() => { setEditingMessageId(message.id); setEditingMessageBody(message.body); }} className="grid h-7 w-7 place-items-center rounded-lg hover:bg-black/10" aria-label="Editar mensaje" title="Editar mensaje"><Pencil className="h-3.5 w-3.5" /></button>}
+                          {canDelete && <button type="button" onClick={() => void removeMessage(message.id)} disabled={busyAction} className="grid h-7 w-7 place-items-center rounded-lg hover:bg-black/10 disabled:opacity-50" aria-label="Eliminar mensaje" title="Eliminar mensaje"><Trash2 className="h-3.5 w-3.5" /></button>}
+                        </div>
+                      )}
+                    </div>
+                    {isEditing ? (
+                      <div className="mt-2">
+                        <textarea value={editingMessageBody} onChange={(event) => setEditingMessageBody(event.target.value)} onKeyDown={(event) => { if (event.key === "Escape") setEditingMessageId(undefined); if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void saveMessageEdit(); } }} autoFocus rows={3} className="w-full resize-none rounded-xl border border-white/30 bg-white px-3 py-2 text-sm text-ink-950 outline-none focus:ring-4 focus:ring-white/20" />
+                        <div className="mt-2 flex justify-end gap-2">
+                          <button type="button" onClick={() => setEditingMessageId(undefined)} className="rounded-lg px-2.5 py-1 text-xs font-black hover:bg-black/10">Cancelar</button>
+                          <button type="button" onClick={() => void saveMessageEdit()} disabled={busyAction || !editingMessageBody.trim()} className={`rounded-lg px-2.5 py-1 text-xs font-black disabled:opacity-50 ${mine ? "bg-white text-brand-700" : "bg-brand-600 text-white"}`}>Guardar</button>
+                        </div>
+                      </div>
+                    ) : <p className="mt-1 whitespace-pre-wrap text-sm leading-5">{message.body}</p>}
+                    <time className="mt-1 block text-right text-[10px] opacity-60">{message.updatedAt ? "editado · " : ""}{new Date(message.createdAt).toLocaleTimeString("es-CL", { hour: "2-digit", minute: "2-digit" })}</time>
+                  </article>
+                );
               }) : <div className="grid h-full place-items-center text-center"><div><Users className="mx-auto h-8 w-8 text-ink-300" /><p className="mt-2 text-sm font-bold text-ink-600">Sin mensajes todavía</p></div></div>}
               <div ref={messagesEnd} />
             </div>

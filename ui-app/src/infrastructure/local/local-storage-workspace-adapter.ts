@@ -912,6 +912,68 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     save(state);
   }
 
+  async updateChatMessage(messageId: string, body: string): Promise<void> {
+    assertText(body, "El mensaje", 1);
+    const state = requireState();
+    const message = state.chatMessages.find((item) => item.id === messageId);
+    if (!message) throw new Error("No encontramos ese mensaje.");
+    if (message.author.id !== state.currentUser.id) throw new Error("Solo el autor puede editar este mensaje.");
+    message.body = body.trim();
+    message.updatedAt = nowIso();
+    state.teamMessages = state.chatMessages
+      .filter((item) => item.conversationId === generalChatId(state.activeOrganizationId))
+      .map((item) => ({ id: item.id, body: item.body, author: clone(item.author), createdAt: item.createdAt }))
+      .slice(-100);
+    save(state);
+  }
+
+  async deleteChatMessage(messageId: string): Promise<void> {
+    const state = requireState();
+    const message = state.chatMessages.find((item) => item.id === messageId);
+    if (!message) throw new Error("No encontramos ese mensaje.");
+    const conversation = state.chatConversations.find((item) => item.id === message.conversationId);
+    const organization = state.organizations.find((item) => item.id === state.activeOrganizationId);
+    const moderatesChannel = conversation?.type !== "direct" && (
+      conversation?.createdBy === state.currentUser.id
+      || organization?.memberRole === "owner"
+      || organization?.memberRole === "admin"
+    );
+    if (message.author.id !== state.currentUser.id && !moderatesChannel) throw new Error("No tienes permiso para eliminar este mensaje.");
+    state.chatMessages = state.chatMessages.filter((item) => item.id !== messageId);
+    state.teamMessages = state.teamMessages.filter((item) => item.id !== messageId);
+    save(state);
+  }
+
+  async updateChatChannel(conversationId: string, nameInput: string): Promise<void> {
+    assertText(nameInput, "El nombre del canal");
+    const state = requireState();
+    const conversation = state.chatConversations.find((item) => item.id === conversationId);
+    if (!conversation || conversation.type !== "channel") throw new Error("Solo se pueden editar canales de texto.");
+    const organization = state.organizations.find((item) => item.id === state.activeOrganizationId);
+    if (conversation.createdBy !== state.currentUser.id && organization?.memberRole !== "owner" && organization?.memberRole !== "admin") {
+      throw new Error("Solo el creador o un administrador puede editar este canal.");
+    }
+    const name = nameInput.trim().replace(/^#/, "");
+    if (state.chatConversations.some((item) => item.id !== conversationId && item.type !== "direct" && item.name.toLowerCase() === name.toLowerCase())) {
+      throw new Error("Ya existe un canal con ese nombre.");
+    }
+    conversation.name = name;
+    save(state);
+  }
+
+  async deleteChatChannel(conversationId: string): Promise<void> {
+    const state = requireState();
+    const conversation = state.chatConversations.find((item) => item.id === conversationId);
+    if (!conversation || conversation.type !== "channel") throw new Error("El canal general y los mensajes directos no se pueden eliminar.");
+    const organization = state.organizations.find((item) => item.id === state.activeOrganizationId);
+    if (conversation.createdBy !== state.currentUser.id && organization?.memberRole !== "owner" && organization?.memberRole !== "admin") {
+      throw new Error("Solo el creador o un administrador puede eliminar este canal.");
+    }
+    state.chatConversations = state.chatConversations.filter((item) => item.id !== conversationId);
+    state.chatMessages = state.chatMessages.filter((item) => item.conversationId !== conversationId);
+    save(state);
+  }
+
   async saveWorkflowNodePosition(projectId: string, taskId: string, x: number, y: number): Promise<void> {
     const state = requireState();
     const task = state.tasks.find((item) => item.id === taskId && item.projectId === projectId);

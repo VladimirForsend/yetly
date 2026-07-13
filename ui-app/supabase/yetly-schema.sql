@@ -1,4 +1,4 @@
--- Yetly Cloud schema v1.8
+-- Yetly Cloud schema v1.9
 -- Ejecutar completo en Supabase Dashboard > SQL Editor.
 -- No requiere service_role en Yetly. La app usa únicamente Project URL + publishable key.
 
@@ -10,7 +10,7 @@ create table if not exists public.yetly_schema_meta (
   installed_at timestamptz not null default now()
 );
 insert into public.yetly_schema_meta (id, version)
-values (1, 18)
+values (1, 19)
 on conflict (id) do update set version = excluded.version;
 
 create table if not exists public.profiles (
@@ -192,8 +192,11 @@ create table if not exists public.chat_messages (
   organization_id uuid not null references public.organizations(id) on delete cascade,
   author_id uuid not null references auth.users(id) on delete cascade,
   body text not null check (char_length(trim(body)) >= 1),
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
 );
+
+alter table public.chat_messages add column if not exists updated_at timestamptz not null default now();
 
 create table if not exists public.workflow_node_positions (
   organization_id uuid not null references public.organizations(id) on delete cascade,
@@ -830,6 +833,25 @@ using (
 drop policy if exists "members create chat conversations" on public.chat_conversations;
 create policy "members create chat conversations" on public.chat_conversations for insert to authenticated
 with check (public.yetly_is_org_member(organization_id) and (created_by = auth.uid() or created_by is null));
+drop policy if exists "channel owners update chat channels" on public.chat_conversations;
+create policy "channel owners update chat channels" on public.chat_conversations for update to authenticated
+using (
+  type = 'channel'
+  and public.yetly_is_org_member(organization_id)
+  and (created_by = auth.uid() or public.yetly_is_org_admin(organization_id))
+)
+with check (
+  type = 'channel'
+  and public.yetly_is_org_member(organization_id)
+  and (created_by = auth.uid() or public.yetly_is_org_admin(organization_id))
+);
+drop policy if exists "channel owners delete chat channels" on public.chat_conversations;
+create policy "channel owners delete chat channels" on public.chat_conversations for delete to authenticated
+using (
+  type = 'channel'
+  and public.yetly_is_org_member(organization_id)
+  and (created_by = auth.uid() or public.yetly_is_org_admin(organization_id))
+);
 
 drop policy if exists "members read chat participants" on public.chat_participants;
 create policy "members read chat participants" on public.chat_participants for select to authenticated
@@ -845,8 +867,8 @@ using (
   and exists (
     select 1
     from public.chat_conversations c
-    where c.id = conversation_id
-      and c.organization_id = organization_id
+    where c.id = chat_messages.conversation_id
+      and c.organization_id = chat_messages.organization_id
       and (
         c.type <> 'direct'
         or exists (
@@ -866,8 +888,8 @@ with check (
   and exists (
     select 1
     from public.chat_conversations c
-    where c.id = conversation_id
-      and c.organization_id = organization_id
+    where c.id = chat_messages.conversation_id
+      and c.organization_id = chat_messages.organization_id
       and (
         c.type <> 'direct'
         or exists (
@@ -877,6 +899,25 @@ with check (
             and p.user_id = auth.uid()
         )
       )
+  )
+);
+drop policy if exists "authors update own chat messages" on public.chat_messages;
+create policy "authors update own chat messages" on public.chat_messages for update to authenticated
+using (author_id = auth.uid() and public.yetly_is_org_member(organization_id))
+with check (author_id = auth.uid() and public.yetly_is_org_member(organization_id));
+drop policy if exists "authors and channel owners delete chat messages" on public.chat_messages;
+create policy "authors and channel owners delete chat messages" on public.chat_messages for delete to authenticated
+using (
+  public.yetly_is_org_member(organization_id)
+  and (
+    author_id = auth.uid()
+    or exists (
+      select 1 from public.chat_conversations c
+      where c.id = chat_messages.conversation_id
+        and c.organization_id = chat_messages.organization_id
+        and c.type <> 'direct'
+        and (c.created_by = auth.uid() or public.yetly_is_org_admin(c.organization_id))
+    )
   )
 );
 
@@ -1080,9 +1121,9 @@ grant select, insert on public.task_messages to authenticated;
 grant select, insert, update on public.task_attachments to authenticated;
 grant select, insert on public.task_events to authenticated;
 grant select, insert on public.team_messages to authenticated;
-grant select, insert on public.chat_conversations to authenticated;
+grant select, insert, update, delete on public.chat_conversations to authenticated;
 grant select, insert on public.chat_participants to authenticated;
-grant select, insert on public.chat_messages to authenticated;
+grant select, insert, update, delete on public.chat_messages to authenticated;
 grant select, insert, update on public.workflow_node_positions to authenticated;
 grant select, insert, delete on public.workflow_connections to authenticated;
 grant select, insert, update on public.ai_conversations to authenticated;
