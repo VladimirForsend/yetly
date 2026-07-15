@@ -7,6 +7,7 @@ import type {
   CreateTimeEntryInput,
   CreateWorkspaceInput,
   ImportResult,
+  ImportProgressHandler,
   JoinOrganizationInput,
   OrganizationSummary,
   PersonSummary,
@@ -1087,7 +1088,8 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
     return JSON.stringify(state, null, 2);
   }
 
-  async importSnapshot(serialized: string): Promise<ImportResult> {
+  async importSnapshot(serialized: string, onProgress?: ImportProgressHandler): Promise<ImportResult> {
+    onProgress?.({ phase: "preparing", label: "Revisando el archivo de respaldo", completed: 0, total: 1, percent: 5 });
     let parsed: PersistedWorkspace;
     try {
       parsed = safeParse(serialized);
@@ -1095,6 +1097,7 @@ export class LocalStorageWorkspaceAdapter implements WorkspacePort {
       throw error instanceof Error ? error : new Error("El respaldo no es válido.");
     }
     save(parsed);
+    onProgress?.({ phase: "completed", label: "Importación completada", completed: 1, total: 1, percent: 100 });
     return {
       projects: parsed.projects.length,
       tasks: parsed.tasks.length,

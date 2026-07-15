@@ -287,6 +287,27 @@ export interface ImportResult {
   issues?: Array<{ entityType: string; localId?: string; message: string; recoverable: boolean }>;
 }
 
+export type ImportProgressPhase =
+  | "preparing"
+  | "teams"
+  | "projects"
+  | "tasks"
+  | "time_entries"
+  | "workflow"
+  | "conversations"
+  | "finalizing"
+  | "completed";
+
+export interface ImportProgress {
+  phase: ImportProgressPhase;
+  label: string;
+  completed: number;
+  total: number;
+  percent: number;
+}
+
+export type ImportProgressHandler = (progress: ImportProgress) => void;
+
 export interface WorkspacePort {
   getSnapshot(organizationId?: string): Promise<WorkspaceSnapshot | null>;
   createWorkspace(input: CreateWorkspaceInput): Promise<WorkspaceSnapshot>;
@@ -328,7 +349,7 @@ export interface WorkspacePort {
   createTimeEntry(input: CreateTimeEntryInput): Promise<TimeEntrySummary>;
   markAllNotificationsRead(): Promise<void>;
   exportSnapshot(): Promise<string>;
-  importSnapshot(serialized: string): Promise<ImportResult>;
+  importSnapshot(serialized: string, onProgress?: ImportProgressHandler): Promise<ImportResult>;
   resetWorkspace(): Promise<void>;
   subscribe?(onChange: () => void): () => void;
 }

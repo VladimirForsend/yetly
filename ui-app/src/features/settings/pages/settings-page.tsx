@@ -17,11 +17,13 @@ import {
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import type { ImportProgress } from "../../../application/ports/workspace-port";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import { createYetlyInviteMessage } from "../../../shared/lib/yetly-invite";
 import { getManagedConnection } from "../../../infrastructure/supabase/supabase-connection";
 import { Button } from "../../../shared/ui/button";
 import { PageHeader } from "../../../shared/ui/page-header";
+import { ImportProgressCard } from "../../../shared/ui/import-progress";
 import { OllamaSettings } from "../../ai/components/ollama-settings";
 import { completePendingMigration, getPendingMigration } from "../../cloud/services/local-migration-store";
 
@@ -47,6 +49,7 @@ export function SettingsPage() {
   const [backupError, setBackupError] = useState("");
   const [connectionMessage, setConnectionMessage] = useState("");
   const [hasPendingMigration, setHasPendingMigration] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportProgress>();
   const fileRef = useRef<HTMLInputElement>(null);
   const managedConnection = getManagedConnection();
 
@@ -58,15 +61,20 @@ export function SettingsPage() {
   async function resumeManagedMigration() {
     setBackupError("");
     setBackupMessage("");
+    setImportProgress({ phase: "preparing", label: "Abriendo el respaldo local", completed: 0, total: 1, percent: 1 });
     try {
       const bundle = await getPendingMigration();
-      if (!bundle) return setHasPendingMigration(false);
+      if (!bundle) {
+        setHasPendingMigration(false);
+        setImportProgress(undefined);
+        return;
+      }
       const result = await importSnapshot(JSON.stringify({
         format: bundle.format,
         version: bundle.version,
         installationId: bundle.installationId,
         workspace: JSON.parse(bundle.workspaceJson),
-      }));
+      }), setImportProgress);
       await completePendingMigration({
         installationId: bundle.installationId,
         completedAt: new Date().toISOString(),
@@ -87,6 +95,7 @@ export function SettingsPage() {
       refetch();
     } catch (cause) {
       setBackupError(cause instanceof Error ? cause.message : "No pudimos continuar la migración.");
+      setImportProgress(undefined);
     }
   }
 
@@ -112,11 +121,13 @@ export function SettingsPage() {
     if (!file) return;
     setBackupError("");
     setBackupMessage("");
+    setImportProgress({ phase: "preparing", label: `Leyendo ${file.name}`, completed: 0, total: 1, percent: 1 });
     try {
-      const result = await importSnapshot(await file.text());
+      const result = await importSnapshot(await file.text(), setImportProgress);
       setBackupMessage(`Respaldo importado: ${result.projects} proyectos, ${result.tasks} tareas y ${result.timeEntries} entradas de tiempo.`);
     } catch (cause) {
       setBackupError(cause instanceof Error ? cause.message : "El respaldo no es válido.");
+      setImportProgress(undefined);
     } finally {
       if (fileRef.current) fileRef.current.value = "";
     }
@@ -273,6 +284,8 @@ export function SettingsPage() {
           <Button variant="secondary" onClick={() => fileRef.current?.click()} disabled={isMutating}><Upload className="h-4 w-4" aria-hidden="true" /> Importar respaldo</Button>
           <input ref={fileRef} type="file" accept="application/json,.json" className="sr-only" onChange={(event) => void importFile(event.target.files?.[0])} />
         </div>
+
+        {importProgress && <div className="mt-5"><ImportProgressCard progress={importProgress} /></div>}
 
         {backupError && <p className="mt-4 rounded-xl bg-danger-50 px-4 py-3 text-sm font-bold text-danger-700" role="alert">{backupError}</p>}
         {backupMessage && <p className="mt-4 rounded-xl bg-success-50 px-4 py-3 text-sm font-bold text-success-700" role="status" aria-live="polite">{backupMessage}</p>}

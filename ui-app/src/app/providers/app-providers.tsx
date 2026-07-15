@@ -7,6 +7,7 @@ import type {
   CreateTimeEntryInput,
   CreateWorkspaceInput,
   ImportResult,
+  ImportProgressHandler,
   JoinOrganizationInput,
   TaskStatus,
   TaskSummary,
@@ -107,7 +108,7 @@ interface WorkspaceContextValue {
   createTimeEntry: (input: CreateTimeEntryInput) => Promise<void>;
   markAllNotificationsRead: () => Promise<void>;
   exportSnapshot: () => Promise<string>;
-  importSnapshot: (serialized: string) => Promise<ImportResult>;
+  importSnapshot: (serialized: string, onProgress?: ImportProgressHandler) => Promise<ImportResult>;
   resetWorkspace: () => Promise<void>;
   isMutating: boolean;
   isCreatingTask: boolean;
@@ -305,7 +306,7 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
     onSuccess: refreshInBackground,
   });
   const importMutation = useMutation({
-    mutationFn: (serialized: string) => workspacePort.importSnapshot(serialized),
+    mutationFn: ({ serialized, onProgress }: { serialized: string; onProgress?: ImportProgressHandler }) => workspacePort.importSnapshot(serialized, onProgress),
     onSuccess: refreshInBackground,
   });
   const resetMutation = useMutation({
@@ -562,7 +563,7 @@ function WorkspaceProvider({ children }: { children: ReactNode }) {
       createTimeEntry: async (input) => { await timeEntryMutation.mutateAsync(input); },
       markAllNotificationsRead: async () => { await markReadMutation.mutateAsync(); },
       exportSnapshot: () => workspacePort.exportSnapshot(),
-      importSnapshot: (serialized) => importMutation.mutateAsync(serialized),
+      importSnapshot: (serialized, onProgress) => importMutation.mutateAsync({ serialized, onProgress }),
       resetWorkspace: async () => { await resetMutation.mutateAsync(); },
       isMutating: allMutations.some((mutation) => mutation.isPending),
       isCreatingTask: createMutation.isPending,

@@ -4,6 +4,7 @@ import type {
   CreateTeamInput,
   CreateTimeEntryInput,
   CreateWorkspaceInput,
+  ImportProgressHandler,
   ImportResult,
   JoinOrganizationInput,
   OrganizationSummary,
@@ -98,7 +99,7 @@ export class HybridWorkspaceAdapter implements WorkspacePort {
   createTimeEntry(input: CreateTimeEntryInput) { return this.active().createTimeEntry(input); }
   markAllNotificationsRead() { return this.active().markAllNotificationsRead(); }
   exportSnapshot() { return this.active().exportSnapshot(); }
-  importSnapshot(serialized: string): Promise<ImportResult> { return this.active().importSnapshot(serialized); }
+  importSnapshot(serialized: string, onProgress?: ImportProgressHandler): Promise<ImportResult> { return this.active().importSnapshot(serialized, onProgress); }
   resetWorkspace() { return this.active().resetWorkspace(); }
 
   subscribe(onChange: () => void) {

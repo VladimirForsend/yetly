@@ -7,6 +7,7 @@ import type {
   CreateTeamInput,
   CreateTimeEntryInput,
   CreateWorkspaceInput,
+  ImportProgressHandler,
   ImportResult,
   JoinOrganizationInput,
   OrganizationSummary,
@@ -1135,7 +1136,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     }, null, 2);
   }
 
-  async importSnapshot(serialized: string): Promise<ImportResult> {
+  async importSnapshot(serialized: string, onProgress?: ImportProgressHandler): Promise<ImportResult> {
     let parsed: any;
     try {
       parsed = JSON.parse(serialized);
@@ -1148,6 +1149,36 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     if (!snapshot || !Array.isArray(snapshot.projects) || !Array.isArray(snapshot.tasks)) {
       throw new Error("El respaldo no corresponde a un workspace Yetly válido.");
     }
+
+    const taskUnits = snapshot.tasks.reduce((total, task) => total
+      + 1
+      + (task.checklist?.length ?? 0)
+      + (task.messages?.length ?? 0)
+      + (task.attachments?.length ?? 0)
+      + (task.history?.length ?? 0), 0);
+    const totalUnits = Math.max(1,
+      2
+      + (snapshot.teams?.length ?? 0)
+      + snapshot.projects.length
+      + taskUnits
+      + (snapshot.timeEntries?.length ?? 0)
+      + (snapshot.workflowNodePositions?.length ?? 0)
+      + (snapshot.workflowConnections?.length ?? 0)
+      + (snapshot.teamMessages?.length ?? 0)
+      + (snapshot.chatConversations?.length ?? 0)
+      + (snapshot.chatMessages?.length ?? 0));
+    let completedUnits = 0;
+    const advance = (phase: Parameters<NonNullable<ImportProgressHandler>>[0]["phase"], label: string, units = 1) => {
+      completedUnits = Math.min(totalUnits, completedUnits + units);
+      onProgress?.({
+        phase,
+        label,
+        completed: completedUnits,
+        total: totalUnits,
+        percent: Math.min(99, Math.round((completedUnits / totalUnits) * 100)),
+      });
+    };
+    onProgress?.({ phase: "preparing", label: "Revisando el respaldo y preparando la importación", completed: 0, total: totalUnits, percent: 2 });
 
     const installationId = typeof parsed?.installationId === "string"
       ? parsed.installationId
@@ -1176,6 +1207,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         mappings.set(`${row.entity_type}:${row.local_id}`, row.cloud_id || "__recorded__");
       }
     }
+    advance("preparing", "Importación preparada; comenzando a copiar los datos");
     const remember = async (entityType: string, localId: string, cloudId?: string, detail = "") => {
       const { error } = await this.client.from("cloud_import_mappings").upsert({
         user_id: auth.user!.id,
@@ -1193,10 +1225,11 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     };
 
     for (const team of snapshot.teams ?? []) {
-      if (mappings.has(`team:${team.id}`)) { teams += 1; continue; }
+      if (mappings.has(`team:${team.id}`)) { teams += 1; advance("teams", `Equipo ${team.name} ya estaba importado`); continue; }
       const created = await this.createTeam({ name: team.name });
       await remember("team", team.id, created.id);
       teams += 1;
+      advance("teams", `Equipo ${team.name} importado`);
     }
 
     const projectMap = new Map<string, string>();
@@ -1209,6 +1242,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       if (rememberedId) {
         projectMap.set(project.id, rememberedId);
         projects += 1;
+        advance("projects", `Proyecto ${project.name} ya estaba importado`);
         continue;
       }
       await this.createProject({
@@ -1225,6 +1259,7 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         await remember("project", project.id, created.id);
         projects += 1;
       }
+      advance("projects", `Proyecto ${project.name} procesado`);
     }
 
     const taskMap = new Map<string, string>();
@@ -1233,10 +1268,22 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       if (rememberedId) {
         taskMap.set(task.id, rememberedId);
         tasks += 1;
+        advance("tasks", `Tarea ${task.title} ya estaba importada`, 1
+          + (task.checklist?.length ?? 0)
+          + (task.messages?.length ?? 0)
+          + (task.attachments?.length ?? 0)
+          + (task.history?.length ?? 0));
         continue;
       }
       const projectId = projectMap.get(task.projectId);
-      if (!projectId) continue;
+      if (!projectId) {
+        advance("tasks", `Tarea ${task.title} omitida porque falta su proyecto`, 1
+          + (task.checklist?.length ?? 0)
+          + (task.messages?.length ?? 0)
+          + (task.attachments?.length ?? 0)
+          + (task.history?.length ?? 0));
+        continue;
+      }
       const created = await this.createTask({
         projectId,
         title: task.title,
@@ -1251,9 +1298,10 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       taskMap.set(task.id, created.id);
       await remember("task", task.id, created.id);
       tasks += 1;
+      advance("tasks", `Tarea ${task.title} importada`);
 
       for (const item of task.checklist ?? []) {
-        if (mappings.has(`checklist:${item.id}`)) { checklistItems += 1; continue; }
+        if (mappings.has(`checklist:${item.id}`)) { checklistItems += 1; advance("tasks", `Checklist de ${task.title}`); continue; }
         await this.addChecklistItem(created.id, item.text);
         const refreshed = await this.getSnapshot(organizationId);
         const cloudItem = refreshed?.tasks.find((candidate) => candidate.id === created.id)?.checklist.find((candidate) => candidate.text === item.text);
@@ -1261,28 +1309,32 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         await remember("checklist", item.id, cloudItem?.id, cloudItem ? "" : "No se pudo identificar el elemento creado.");
         if (cloudItem) checklistItems += 1;
         else { skipped += 1; issues.push({ entityType: "checklist", localId: item.id, message: "No se pudo identificar el elemento creado.", recoverable: true }); }
+        advance("tasks", `Checklist de ${task.title}`);
       }
       for (const message of task.messages ?? []) {
-        if (mappings.has(`task_message:${message.id}`)) { messages += 1; continue; }
+        if (mappings.has(`task_message:${message.id}`)) { messages += 1; advance("tasks", `Mensajes de ${task.title}`); continue; }
         await this.addTaskMessage(created.id, message.body);
         await remember("task_message", message.id, undefined, `Importado como mensaje del dueño; autor original: ${message.author?.name ?? "desconocido"}.`);
         messages += 1;
+        advance("tasks", `Mensajes de ${task.title}`);
       }
       for (const attachment of task.attachments ?? []) {
-        if (mappings.has(`attachment:${attachment.id}`)) { attachments += 1; continue; }
+        if (mappings.has(`attachment:${attachment.id}`)) { attachments += 1; advance("tasks", `Adjuntos de ${task.title}`); continue; }
         const blob = await getCachedTaskFile(attachment.id);
         if (!blob) {
           await remember("attachment", attachment.id, undefined, "El archivo binario no estaba disponible en este navegador.");
           skipped += 1;
           issues.push({ entityType: "attachment", localId: attachment.id, message: "El archivo binario no estaba disponible en este navegador.", recoverable: false });
+          advance("tasks", `Adjunto ${attachment.fileName} omitido`);
           continue;
         }
         await this.uploadTaskAttachment(created.id, new File([blob], attachment.fileName, { type: attachment.contentType }));
         await remember("attachment", attachment.id, undefined, "Archivo copiado al bucket Cloud.");
         attachments += 1;
+        advance("tasks", `Adjunto ${attachment.fileName} importado`);
       }
       for (const history of task.history ?? []) {
-        if (mappings.has(`task_event:${history.id}`)) continue;
+        if (mappings.has(`task_event:${history.id}`)) { advance("tasks", `Historial de ${task.title}`); continue; }
         const { data: event, error } = await this.client.from("task_events").insert({
           organization_id: organizationId,
           task_id: created.id,
@@ -1297,16 +1349,18 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         } else {
           await remember("task_event", history.id, event.id);
         }
+        advance("tasks", `Historial de ${task.title}`);
       }
     }
 
     for (const entry of snapshot.timeEntries ?? []) {
       if (mappings.has(`time_entry:${entry.id}`)) {
         timeEntries += 1;
+        advance("time_entries", "Registro de tiempo ya importado");
         continue;
       }
       const projectId = projectMap.get(entry.projectId);
-      if (!projectId) continue;
+      if (!projectId) { advance("time_entries", "Registro de tiempo omitido"); continue; }
       const created = await this.createTimeEntry({
         projectId,
         taskId: entry.taskId ? taskMap.get(entry.taskId) : undefined,
@@ -1316,15 +1370,17 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
       });
       await remember("time_entry", entry.id, created.id);
       timeEntries += 1;
+      advance("time_entries", "Registro de tiempo importado");
     }
 
     for (const node of snapshot.workflowNodePositions ?? []) {
       const projectId = projectMap.get(node.projectId);
       const taskId = taskMap.get(node.taskId);
       if (projectId && taskId) await this.saveWorkflowNodePosition(projectId, taskId, node.x, node.y);
+      advance("workflow", "Posiciones del Workflow Nodix");
     }
     for (const connection of snapshot.workflowConnections ?? []) {
-      if (mappings.has(`workflow_connection:${connection.id}`)) { workflowConnections += 1; continue; }
+      if (mappings.has(`workflow_connection:${connection.id}`)) { workflowConnections += 1; advance("workflow", "Conexión Nodix ya importada"); continue; }
       const projectId = projectMap.get(connection.projectId);
       const sourceTaskId = taskMap.get(connection.sourceTaskId);
       const targetTaskId = taskMap.get(connection.targetTaskId);
@@ -1332,19 +1388,22 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
         await remember("workflow_connection", connection.id, undefined, "Faltó una tarea relacionada.");
         skipped += 1;
         issues.push({ entityType: "workflow_connection", localId: connection.id, message: "Faltó una tarea relacionada.", recoverable: false });
+        advance("workflow", "Conexión Nodix omitida");
         continue;
       }
       await this.createWorkflowConnection(projectId, sourceTaskId, targetTaskId);
       await remember("workflow_connection", connection.id, undefined, "Conexión Workflow Nodix copiada.");
       workflowConnections += 1;
+      advance("workflow", "Conexión Nodix importada");
     }
 
     for (const oldMessage of snapshot.teamMessages ?? []) {
-      if (mappings.has(`team_message:${oldMessage.id}`)) { messages += 1; continue; }
+      if (mappings.has(`team_message:${oldMessage.id}`)) { messages += 1; advance("conversations", "Mensaje general ya importado"); continue; }
       const authorPrefix = oldMessage.author?.id !== auth.user.id ? `[${oldMessage.author?.name ?? "Usuario local"}] ` : "";
       await this.sendTeamMessage(`${authorPrefix}${oldMessage.body}`);
       await remember("team_message", oldMessage.id, undefined, "Mensaje general copiado.");
       messages += 1;
+      advance("conversations", "Mensaje general importado");
     }
 
     const conversationMap = new Map<string, string>();
@@ -1353,32 +1412,40 @@ export class SupabaseWorkspaceAdapter implements WorkspacePort {
     for (const conversation of snapshot.chatConversations ?? []) {
       if (conversation.type === "general" && general) {
         conversationMap.set(conversation.id, general.id);
+        advance("conversations", "Canal general preparado");
         continue;
       }
       if (conversation.type === "direct") {
         skipped += 1;
         issues.push({ entityType: "chat_conversation", localId: conversation.id, message: "Los DM locales requieren que la otra persona acepte primero una invitación Cloud.", recoverable: true });
+        advance("conversations", "Conversación directa omitida hasta que el colaborador se una");
         continue;
       }
       const mapped = mappings.get(`chat_conversation:${conversation.id}`);
       if (mapped && mapped !== "__recorded__") {
         conversationMap.set(conversation.id, mapped);
+        advance("conversations", `Canal ${conversation.name} ya importado`);
         continue;
       }
       const cloudId = await this.createChatChannel(conversation.name);
       conversationMap.set(conversation.id, cloudId);
       await remember("chat_conversation", conversation.id, cloudId);
+      advance("conversations", `Canal ${conversation.name} importado`);
     }
     for (const oldMessage of snapshot.chatMessages ?? []) {
-      if (mappings.has(`chat_message:${oldMessage.id}`)) { messages += 1; continue; }
+      if (mappings.has(`chat_message:${oldMessage.id}`)) { messages += 1; advance("conversations", "Mensaje de canal ya importado"); continue; }
       const conversationId = conversationMap.get(oldMessage.conversationId);
-      if (!conversationId) continue;
+      if (!conversationId) { advance("conversations", "Mensaje de canal omitido"); continue; }
       const authorPrefix = oldMessage.author?.id !== auth.user.id ? `[${oldMessage.author?.name ?? "Usuario local"}] ` : "";
       await this.sendChatMessage(conversationId, `${authorPrefix}${oldMessage.body}`);
       await remember("chat_message", oldMessage.id, undefined, "Mensaje copiado.");
       messages += 1;
+      advance("conversations", "Mensaje de canal importado");
     }
 
+    advance("finalizing", "Verificando los datos importados");
+    completedUnits = totalUnits;
+    onProgress?.({ phase: "completed", label: "Importación completada", completed: totalUnits, total: totalUnits, percent: 100 });
     return { projects, tasks, timeEntries, teams, checklistItems, messages, workflowConnections, attachments, skipped, issues };
   }
 

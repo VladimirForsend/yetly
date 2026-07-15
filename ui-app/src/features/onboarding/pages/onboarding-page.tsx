@@ -18,6 +18,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
+import type { ImportProgress } from "../../../application/ports/workspace-port";
 import { useWorkspace } from "../../../app/providers/app-providers";
 import {
   dashboardLinks,
@@ -34,6 +35,7 @@ import {
 } from "../../../infrastructure/supabase/supabase-connection";
 import { YETLY_SUPABASE_SCHEMA_SQL } from "../../../infrastructure/supabase/yetly-schema-sql";
 import { Button } from "../../../shared/ui/button";
+import { ImportProgressCard } from "../../../shared/ui/import-progress";
 import { ManagedCloudSetup } from "../../cloud/components/managed-cloud-setup";
 import { completePendingMigration, getPendingMigration } from "../../cloud/services/local-migration-store";
 import { managedCloudAvailable } from "../../cloud/services/managed-cloud-client";
@@ -93,6 +95,7 @@ export function OnboardingPage() {
   const [inviteCode, setInviteCode] = useState("");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
+  const [importProgress, setImportProgress] = useState<ImportProgress>();
   const inviteHandledRef = useRef(false);
   const schemaCheckedRef = useRef(false);
 
@@ -286,7 +289,7 @@ export function OnboardingPage() {
               version: pendingMigration.version,
               installationId: pendingMigration.installationId,
               workspace: JSON.parse(pendingMigration.workspaceJson),
-            }));
+            }), setImportProgress);
             await completePendingMigration({
               installationId: pendingMigration.installationId,
               completedAt: new Date().toISOString(),
@@ -671,6 +674,7 @@ export function OnboardingPage() {
                     {isMutating ? "Configurando…" : workspaceMode === "create" ? "Crear y entrar" : "Unirme y entrar"}
                   </Button>
                 </div>
+                {importProgress && <div className="mt-5"><ImportProgressCard progress={importProgress} /></div>}
               </form>
             </div>
           )}
